@@ -23,16 +23,16 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 
@@ -54,23 +54,26 @@ class MaxService : Service() {
         val running = MutableStateFlow(false)
         val lastReply = MutableStateFlow("")
 
-        /** actions: START, STOP, TALK (open mic now), TEXT (typed command). */
-        fun send(c: Context, action: String, text: String? = null) {
+        /** actions: START, STOP, TALK, TEXT, CALL_RING. */
+        fun send(c: Context, action: String, text: String? = null, number: String? = null) {
             if (c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
-            ContextCompat.startForegroundService(c, Intent(c, MaxService::class.java).setAction(action).putExtra("text", text))
+            ContextCompat.startForegroundService(
+                c, Intent(c, MaxService::class.java).setAction(action).putExtra("text", text).putExtra("number", number)
+            )
         }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var overlay: NeonOverlay
+    private lateinit var glow: SiriGlow
     private lateinit var speaker: Speaker
     private lateinit var actions: Actions
     private var rec: SpeechRecognizer? = null
     private var job: Job? = null
     private var busy = false
     private val history = ArrayDeque<String>()
-    private val wakeWords = listOf("hello max", "hallo max", "helo max", "hey max", "hi max", "हेलो मैक्स", "हैलो मैक्स", "मैक्स", "max", "maks")
+    private val wakeRe = Regex("(?i)\\bmax\\b|मैक्स")
     private val RESULTS = SpeechRecognizer.RESULTS_RECOGNITION
 
     override fun onBind(i: Intent?): IBinder? = null
@@ -78,7 +81,10 @@ class MaxService : Service() {
     override fun onCreate() {
         super.onCreate()
         startFg()
-        overlay = NeonOverlay(this); speaker = Speaker(this); actions = Actions(this)
+        overlay = NeonOverlay(this)
+        glow = SiriGlow(this)
+        speaker = Speaker(this)
+        actions = Actions(this)
         running.value = true
         listenWake()
     }
@@ -88,12 +94,18 @@ class MaxService : Service() {
             "STOP" -> stopSelf()
             "TALK" -> onWake("")
             "TEXT" -> handle(i?.getStringExtra("text").orEmpty())
+            "CALL_RING" -> incomingCall(i?.getStringExtra("number").orEmpty())
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        scope.cancel(); rec?.destroy(); speaker.stop(); overlay.hide(); running.value = false
+        scope.cancel()
+        rec?.destroy()
+        speaker.stop()
+        overlay.hide()
+        glow.hide()
+        running.value = false
         super.onDestroy()
     }
 
@@ -104,7 +116,7 @@ class MaxService : Service() {
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val n = NotificationCompat.Builder(this, "max")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("MAX jaag rahi hai")
+            .setContentTitle("MAX jaag raha hai")
             .setContentText("\"Hello MAX\" bolo")
             .setContentIntent(open).addAction(0, "Band karo", stop).setOngoing(true).build()
         ServiceCompat.startForeground(this, 1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -117,50 +129,65 @@ class MaxService : Service() {
         return SpeechRecognizer.createSpeechRecognizer(this).also { rec = it }
     }
 
-    private fun intent(lang: String) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+    private fun intent(lang: String, silenceMs: Int = 1600) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
         .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1600)
+        .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs)
 
-    /** Mutes the recognizer's start beep for a moment (only if the user hadn't muted that stream). */
+    /** Mutes the recognizer's start beep (system and notification streams) for a moment, then restores them. */
     private fun quiet(block: () -> Unit) {
         val am = getSystemService(AudioManager::class.java)
-        val muted = runCatching { am.isStreamMute(AudioManager.STREAM_NOTIFICATION) }.getOrDefault(true)
-        if (!muted) runCatching { am.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0) }
+        val streams = intArrayOf(AudioManager.STREAM_SYSTEM, AudioManager.STREAM_NOTIFICATION)
+        val was = streams.map { runCatching { am.isStreamMute(it) }.getOrDefault(true) }
+        streams.forEachIndexed { i, s -> if (!was[i]) runCatching { am.adjustStreamVolume(s, AudioManager.ADJUST_MUTE, 0) } }
         block()
-        if (!muted) ui.postDelayed({ runCatching { am.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0) } }, 700)
+        ui.postDelayed({
+            streams.forEachIndexed { i, s -> if (!was[i]) runCatching { am.adjustStreamVolume(s, AudioManager.ADJUST_UNMUTE, 0) } }
+        }, 800)
     }
 
     private fun hasMic() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    private fun again(ms: Long = 250) { ui.postDelayed({ if (!busy) listenWake() }, ms) }
+    /** Wait before the next listening round, so the mic does not restart in a tight loop. */
+    private fun again(ms: Long = 1500) {
+        ui.postDelayed({ if (!busy) listenWake() }, ms)
+    }
 
-    /** Always-on loop: listens in short bursts for "MAX". */
+    /** Always-on, quiet loop that waits for the word "MAX". */
     private fun listenWake() {
         if (!hasMic() || busy) return
         val r = fresh()
         r.setRecognitionListener(object : L() {
             override fun onPartialResults(b: Bundle?) { check(b) }
-            override fun onResults(b: Bundle?) { if (!check(b)) again() }
-            override fun onError(e: Int) { again(if (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1500 else 250) }
+            override fun onResults(b: Bundle?) { if (!check(b)) again(1500) }
+            override fun onError(e: Int) {
+                val wait = when (e) {
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 3000L
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 10000L
+                    else -> 1500L
+                }
+                again(wait)
+            }
         })
-        quiet { r.startListening(intent("en-IN")) }
+        quiet { r.startListening(intent("en-IN", 2000)) }
     }
 
     private fun check(b: Bundle?): Boolean {
         if (busy) return true
         val t = b?.getStringArrayList(RESULTS)?.firstOrNull() ?: return false
-        val low = t.lowercase()
-        val w = wakeWords.firstOrNull { low.contains(it) } ?: return false
+        val m = wakeRe.find(t) ?: return false
         busy = true
-        val rest = t.substring((low.indexOf(w) + w.length).coerceAtMost(t.length)).trim(' ', ',', '.', '!')
+        val rest = t.substring(m.range.last + 1).trim(' ', ',', '.', '!')
         ui.post { onWake(rest) }
         return true
     }
 
     private fun onWake(rest: String) {
-        job?.cancel(); speaker.stop(); busy = true
+        job?.cancel()
+        speaker.stop()
+        busy = true
+        glow.show()
         overlay.show { cancelAll() }
         overlay.state(1, "SUN RAHI HOON…")
         if (rest.length > 2) handle(rest) else listenCommand()
@@ -181,43 +208,82 @@ class MaxService : Service() {
     }
 
     private fun finish(delayMs: Long = 0) {
-        ui.postDelayed({ overlay.hide(); busy = false; listenWake() }, delayMs)
+        ui.postDelayed({
+            overlay.hide()
+            glow.hide()
+            busy = false
+            listenWake()
+        }, delayMs)
     }
 
     private fun cancelAll() {
-        job?.cancel(); speaker.stop(); rec?.cancel(); finish()
+        job?.cancel()
+        speaker.stop()
+        rec?.cancel()
+        finish()
     }
 
-    // ---------- brain ----------
-
-    /** Asks out loud and waits for a spoken yes/no. Nothing sensitive happens without this. */
-    private suspend fun confirm(q: String): Boolean {
+    /** Asks out loud and listens for yes or no. Returns 1 yes, 0 no, -1 no answer. */
+    private suspend fun askYesNo(q: String): Int {
         speak(q)
-        val d = CompletableDeferred<String>()
+        val d = CompletableDeferred<String?>()
         ui.post {
             val r = fresh()
             r.setRecognitionListener(object : L() {
-                override fun onResults(b: Bundle?) { d.complete(b?.getStringArrayList(RESULTS)?.firstOrNull().orEmpty()) }
-                override fun onError(e: Int) { d.complete("") }
+                override fun onResults(b: Bundle?) { d.complete(b?.getStringArrayList(RESULTS)?.firstOrNull()) }
+                override fun onError(e: Int) { d.complete(null) }
             })
             overlay.state(1, "HAAN YA NA BOLO…")
             quiet { r.startListening(intent(Store.lang(this))) }
         }
-        val a = withTimeoutOrNull(9000) { d.await() }.orEmpty().lowercase()
-        return listOf("haan", "han ", "yes", "yeah", "ok", "kar do", "kardo", "bhej do", "हाँ", "हां", "ठीक", "कर दो", "भेज दो").any { a.contains(it) }
+        val heard = (withTimeoutOrNull(9000) { d.await() } ?: "").lowercase()
+        val words = heard.split(Regex("[\\s,.!?।]+")).filter { it.isNotEmpty() }.toSet()
+        val yes = setOf("haan", "han", "yes", "yeah", "ok", "okay", "kar", "karo", "do", "bhej", "utha", "uthao", "हाँ", "हां", "ठीक", "कर", "दो", "भेज", "उठा")
+        val no = setOf("na", "nahi", "mat", "cancel", "नहीं", "ना")
+        return when {
+            words.any { it in no } -> 0
+            words.any { it in yes } -> 1
+            else -> -1
+        }
     }
+
+    /** Asks before a risky action, unless the user turned that check off in Settings. */
+    private suspend fun confirm(q: String): Boolean = Store.autoSend(this) || askYesNo(q) == 1
+
+    // ---------- incoming calls ----------
+
+    private fun incomingCall(num: String) {
+        if (busy) return
+        busy = true
+        glow.show()
+        overlay.show { cancelAll() }
+        overlay.state(1, "CALL AAYI HAI…")
+        job = scope.launch {
+            val who = withContext(Dispatchers.IO) { actions.nameFor(num) } ?: num.ifBlank { "Ek unknown number" }
+            when (askYesNo("$who ka call aa raha hai. Uthaun? Haan ya na bolo.")) {
+                1 -> { actions.answerCall(); speak("Theek hai, call utha li.") }
+                0 -> { actions.hangUp(); speak("Call kaat di.") }
+                else -> {}
+            }
+            finish()
+        }
+    }
+
+    // ---------- brain ----------
 
     private suspend fun speak(t: String) {
         if (t.isBlank()) return
         lastReply.value = t
-        overlay.state(3, "BOL RAHI HOON…"); overlay.heard(t)
+        overlay.state(3, "BOL RAHI HOON…")
+        overlay.heard(t)
         speaker.say(t) { overlay.level(it) }
     }
 
     private fun handle(text: String) {
         if (text.isBlank()) return
         busy = true
-        overlay.heard(text); overlay.state(2, "SOCH RAHI HOON…")
+        overlay.heard(text)
+        overlay.state(2, "SOCH RAHI HOON…")
         job?.cancel()
         job = scope.launch {
             val ctx = this@MaxService
@@ -231,15 +297,17 @@ class MaxService : Service() {
                 when (a) {
                     "open_app" -> if (!actions.openApp(g.optString("app"))) say = "Mujhe ye app nahi mila."
                     "call" -> {
-                        val n = actions.number(g.optString("name"))
-                        if (n == null) say = "Ye naam mere paas save nahi hai. Yaadein mein number daal do."
-                        else if (!confirm("${g.optString("name")} ko call lagaun? Haan ya na bolo.")) say = "Theek hai, call cancel."
+                        val name = g.optString("name")
+                        val n = actions.number(name)
+                        if (n == null) say = "Ye naam save nahi hai. Yaadein mein number daal do."
+                        else if (!confirm("$name ko call lagaun? Haan ya na bolo.")) say = "Theek hai, call cancel."
                         else { speak(say); say = ""; actions.call(n) }
                     }
                     "whatsapp" -> {
-                        val n = actions.number(g.optString("to"))
+                        val to = g.optString("to")
+                        val n = actions.number(to)
                         if (n == null) say = "Ye number save nahi hai."
-                        else if (!confirm("${g.optString("to")} ko ye message bhejun: ${g.optString("message")}. Haan ya na bolo.")) say = "Theek hai, message nahi bheja."
+                        else if (!confirm("$to ko ye message bhejun: ${g.optString("message")}. Haan ya na bolo.")) say = "Theek hai, message nahi bheja."
                         else if (!actions.whatsapp(n, g.optString("message"))) say = "WhatsApp install nahi mila."
                     }
                     "save_contact" -> Store.saveContact(ctx, g.optString("name"), g.optString("number"))
@@ -253,6 +321,12 @@ class MaxService : Service() {
                     "note_add" -> Store.addNote(ctx, g.optString("text"))
                     "note_read" -> say = Store.notes(ctx).takeLast(5).joinToString(". ").ifEmpty { "Abhi koi note nahi hai." }
                     "system" -> if (!actions.global(g.optString("cmd"))) say = noA11y
+                    "screenshot" -> if (!actions.global("screenshot")) say = noA11y
+                    "photo" -> if (!actions.photo()) say = "Camera app nahi khul paya."
+                    "answer_call" -> if (!actions.answerCall()) say = "Call uthane ki permission nahi hai."
+                    "reject_call" -> if (!actions.hangUp()) say = "Call kaatne ki permission nahi hai."
+                    "contacts" -> say = withContext(Dispatchers.IO) { actions.allContacts() }
+                        .take(10).joinToString(", ") { it.first }.ifEmpty { "Phone mein koi contact nahi mila." }
                     "ui_click" -> if (!actions.click(g.optString("text"))) say = "Screen par ye mujhe nahi dikha."
                     "ui_type" -> if (!actions.type(g.optString("text"))) say = "Koi text box select nahi hai."
                     "ui_scroll" -> if (!actions.scroll(g.optString("dir"))) say = noA11y
@@ -277,9 +351,11 @@ class MaxService : Service() {
         }
     }
 
-    /** Streams the HTML from Gemini onto the transparent code screen, saves it, opens it in Chrome. */
+    /** Streams the HTML from Gemini onto the code panel, saves it, opens it in Chrome. */
     private suspend fun buildSite(g: JSONObject, intro: String): String = coroutineScope {
-        overlay.show { cancelAll() }; overlay.codeOn(); overlay.state(2, "CODE LIKH RAHI HOON…")
+        overlay.show { cancelAll() }
+        overlay.codeOn()
+        overlay.state(2, "CODE LIKH RAHI HOON…")
         val talk = launch { speak(intro) }
         val slug = g.optString("name", "site").lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifEmpty { "site" }
         val html = withContext(Dispatchers.IO) {

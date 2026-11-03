@@ -9,11 +9,14 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.ContactsContract
+import android.provider.MediaStore
+import android.telecom.TelecomManager
 
 /** Everything MAX can do on the phone. Accessibility-based ones return false if the service is off. */
 class Actions(private val c: Context) {
     private val a get() = MaxAccessibilityService.instance
 
+    private fun has(p: String) = c.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     private fun start(i: Intent) = c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
     fun openApp(name: String): Boolean {
@@ -31,14 +34,14 @@ class Actions(private val c: Context) {
         return true
     }
 
-    /** Looks in MAX's own saved numbers first, then the phone's contacts. */
+    /** Saved MAX numbers first, then the phone's contacts. */
     fun number(name: String): String? {
         val n = name.trim().lowercase()
         if (n.count { it.isDigit() } >= 7) return n.filter { it.isDigit() || it == '+' }
         val saved = Store.contacts(c)
         saved.entries.firstOrNull { it.key.lowercase() == n }?.let { return it.value }
         saved.entries.firstOrNull { it.key.lowercase().contains(n) || n.contains(it.key.lowercase()) }?.let { return it.value }
-        if (c.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+        if (has(Manifest.permission.READ_CONTACTS)) {
             c.contentResolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
@@ -48,10 +51,44 @@ class Actions(private val c: Context) {
         return null
     }
 
-    fun call(number: String) {
-        val allowed = c.checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
-        start(Intent(if (allowed) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))))
+    /** Name of a number from the phone's contacts, or null. */
+    fun nameFor(number: String): String? {
+        if (number.isBlank() || !has(Manifest.permission.READ_CONTACTS)) return null
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_URI, Uri.encode(number))
+        c.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) return it.getString(0) }
+        return null
     }
+
+    /** Every name and number in the phone's contacts. */
+    fun allContacts(): List<Pair<String, String>> {
+        if (!has(Manifest.permission.READ_CONTACTS)) return emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        c.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+            null, null, "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+        )?.use {
+            while (it.moveToNext()) out.add((it.getString(0) ?: "") to (it.getString(1) ?: ""))
+        }
+        return out.distinct()
+    }
+
+    fun call(number: String) {
+        start(Intent(if (has(Manifest.permission.CALL_PHONE)) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))))
+    }
+
+    private fun telecom(block: TelecomManager.() -> Unit): Boolean {
+        if (!has(Manifest.permission.ANSWER_PHONE_CALLS)) return false
+        return runCatching { c.getSystemService(TelecomManager::class.java).block() }.isSuccess
+    }
+
+    fun answerCall(): Boolean = telecom { acceptRingingCall() }
+
+    fun hangUp(): Boolean = telecom { endCall() }
+
+    /** Opens the camera app. Android does not allow silent photos from another app. */
+    fun photo(): Boolean = runCatching { start(Intent(MediaStore.ACTION_IMAGE_CAPTURE)) }.isSuccess
 
     /** Opens the chat with the message filled in, then the accessibility service taps Send. */
     fun whatsapp(number: String, msg: String): Boolean {

@@ -33,6 +33,10 @@ object Store {
     fun setLang(c: Context, v: String) = p(c).edit().putString("lang", v).apply()
     fun done(c: Context) = p(c).getBoolean("done", false)
     fun setDone(c: Context, v: Boolean) = p(c).edit().putBoolean("done", v).apply()
+    fun autoSend(c: Context) = p(c).getBoolean("autosend", false)
+    fun setAutoSend(c: Context, v: Boolean) = p(c).edit().putBoolean("autosend", v).apply()
+    fun dark(c: Context) = p(c).getBoolean("dark", true)
+    fun setDark(c: Context, v: Boolean) = p(c).edit().putBoolean("dark", v).apply()
 
     fun contacts(c: Context): Map<String, String> {
         val o = JSONObject(p(c).getString("contacts", "{}") ?: "{}")
@@ -62,7 +66,7 @@ object Store {
 object Gemini {
     private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
     // Tried in order. If one model is unavailable on the free tier, the next one is used.
-    private val CHAT_MODELS = listOf("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash")
+    private val CHAT_MODELS = listOf("gemini-2.5-flash", "gemini-2.5-flash-lite")
     private val TTS_MODELS = listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts")
     private const val VOICE_SYS =
         "You are MAX, a warm Indian girl assistant speaking aloud. Answer in at most 4 short sentences, in the user's language " +
@@ -130,6 +134,9 @@ Actions:
 - system: {"cmd"} one of back, home, recents, notifications, quick_settings, screenshot, lock.
 - ui_click: {"text"} tap the on-screen item with this text. ui_type: {"text"}. ui_scroll: {"dir"} up or down. read_screen: {}.
 - flashlight: {"on":true or false}. volume: {"dir"} up, down or mute.
+- photo: {} open the camera. screenshot: {} take a screenshot.
+- answer_call: {} pick up the ringing call. reject_call: {} end the call.
+- contacts: {} list the names in the phone's contacts.
 Saved contacts in MAX: $contacts
 For call and whatsapp use the exact saved name from that list when it matches, otherwise the spoken name. Never refuse; if unsure pick the closest action or chat.
 """.trimIndent()

@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -61,6 +62,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -90,9 +93,11 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private val BG = Color(0xFFD9E4F5)
-private val INK = Color(0xFF14214A)
-private val MUTE = Color(0xFF4A5A8A)
+object Theme { var dark by mutableStateOf(true) }
+private val BG get() = if (Theme.dark) Color(0xFF0B1024) else Color(0xFFD9E4F5)
+private val INK get() = if (Theme.dark) Color(0xFFEAF0FF) else Color(0xFF14214A)
+private val MUTE get() = if (Theme.dark) Color(0xFF9AA8D6) else Color(0xFF4A5A8A)
+private val CARD get() = if (Theme.dark) listOf(Color(0xFF1A2145), Color(0xFF121833)) else listOf(Color.White, Color(0xFFEAF0FC))
 private val BLUE = Color(0xFF3B8BFF)
 private val CY = Color(0xFF00F0FF)
 private val PK = Color(0xFFFF2BD6)
@@ -102,6 +107,7 @@ class Perm(val title: String, val desc: String, val must: Boolean, val ok: () ->
 class MainActivity : ComponentActivity() {
     private var tick by mutableIntStateOf(0)
     private val askPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
+    private val askMany = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { tick++ }
 
     private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
@@ -128,7 +134,16 @@ class MainActivity : ComponentActivity() {
             { askPerm.launch(Manifest.permission.POST_NOTIFICATIONS) }),
         Perm("Battery optimisation band", "Isse screen off hone par bhi MAX chup nahi hoti.", false,
             { getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) },
-            { startActivity(Intent(Sys.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) })
+            { startActivity(Intent(Sys.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }),
+        Perm("Camera", "Photo khinchne ke liye, jab tum kahoge.", false,
+            { granted(Manifest.permission.CAMERA) },
+            { askMany.launch(arrayOf(Manifest.permission.CAMERA)) }),
+        Perm("Call log aur call status", "Aane wali call ka naam batane ke liye.", false,
+            { granted(Manifest.permission.READ_CALL_LOG) && granted(Manifest.permission.READ_PHONE_STATE) },
+            { askMany.launch(arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_STATE)) }),
+        Perm("Call uthana aur kaatna", "Tumhare kehne par call uthana ya kaatna.", false,
+            { granted(Manifest.permission.ANSWER_PHONE_CALLS) },
+            { askMany.launch(arrayOf(Manifest.permission.ANSWER_PHONE_CALLS)) })
     )
 
     override fun onResume() { super.onResume(); tick++ }
@@ -136,8 +151,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         enableEdgeToEdge()
+        Theme.dark = Store.dark(this)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = BLUE)) {
+            MaterialTheme(colorScheme = if (Theme.dark) darkColorScheme(primary = BLUE) else lightColorScheme(primary = BLUE)) {
                 var done by remember { mutableStateOf(Store.done(this@MainActivity)) }
                 if (!done) Setup(tick, perms()) { Store.setDone(this@MainActivity, true); done = true }
                 else Main()
@@ -153,7 +169,7 @@ private fun Soft(modifier: Modifier = Modifier, content: @Composable ColumnScope
     val sh = RoundedCornerShape(26.dp)
     Column(
         modifier.shadow(10.dp, sh, ambientColor = Color(0xFF9DB4E0), spotColor = Color(0xFF9DB4E0))
-            .clip(sh).background(Brush.verticalGradient(listOf(Color.White, Color(0xFFEAF0FC)))).padding(16.dp),
+            .clip(sh).background(Brush.verticalGradient(CARD)).padding(16.dp),
         content = content
     )
 }
@@ -162,7 +178,7 @@ private fun Soft(modifier: Modifier = Modifier, content: @Composable ColumnScope
 private fun Pill(t: String, on: Boolean, click: () -> Unit) {
     Text(
         t, color = if (on) Color.White else INK, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) BLUE else Color.White)
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) BLUE else CARD[0])
             .clickable(onClick = click).padding(horizontal = 16.dp, vertical = 9.dp)
     )
 }
@@ -261,6 +277,7 @@ private fun Orb(onClick: () -> Unit) {
             arc(r * 0.68f, -a * 1.4f, PK, 4f); arc(r * 0.68f, -a * 1.4f + 180, PK, 4f)
             drawCircle(Brush.radialGradient(listOf(Color.White, PK, Color.Transparent), c, r * 0.4f * p), r * 0.4f * p, c)
         }
+        Image(painterResource(R.drawable.max_orb), "MAX", Modifier.size(150.dp).clip(CircleShape))
     }
 }
 
@@ -321,33 +338,54 @@ private fun ContactsTab() {
     var name by remember { mutableStateOf("") }
     var num by remember { mutableStateOf("") }
     var list by remember { mutableStateOf(Store.contacts(c).toList()) }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Yaadein", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = INK)
-        Text("Yahan save kiye number par MAX call aur WhatsApp karegi.", color = MUTE)
-        Soft(Modifier.fillMaxWidth()) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Naam") })
-            OutlinedTextField(num, { num = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Number (+91…)") })
+    var phone by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var showPhone by remember { mutableStateOf(false) }
+    val hasPerm = c.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+    LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("Yaadein", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = INK) }
+        item { Text("Yahan save number par MAX call aur WhatsApp karega. Phone ke contacts bhi dikh sakte hain.", color = MUTE) }
+        item {
+            Soft(Modifier.fillMaxWidth()) {
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Naam") })
+                OutlinedTextField(num, { num = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Number (+91...)") })
+                Button(
+                    onClick = {
+                        if (name.isNotBlank() && num.isNotBlank()) {
+                            Store.saveContact(c, name, num); list = Store.contacts(c).toList(); name = ""; num = ""
+                        }
+                    },
+                    modifier = Modifier.padding(top = 10.dp)
+                ) { Text("Save karo") }
+            }
+        }
+        items(list) { (n, v) ->
+            Soft(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(n, fontWeight = FontWeight.Bold, color = INK)
+                        Text(v, color = MUTE)
+                    }
+                    IconButton(onClick = { Store.deleteContact(c, n); list = Store.contacts(c).toList() }) {
+                        Icon(Icons.Filled.Delete, "Delete", tint = MUTE)
+                    }
+                }
+            }
+        }
+        item {
             Button(
                 onClick = {
-                    if (name.isNotBlank() && num.isNotBlank()) {
-                        Store.saveContact(c, name, num); list = Store.contacts(c).toList(); name = ""; num = ""
-                    }
+                    if (!showPhone) phone = Actions(c).allContacts()
+                    showPhone = !showPhone
                 },
-                modifier = Modifier.padding(top = 10.dp)
-            ) { Text("Save karo") }
+                enabled = hasPerm
+            ) { Text(if (showPhone) "Phone contacts chhupao" else "Phone ke saare contacts dikhao") }
+            if (!hasPerm) Text("Pehle Setup mein Contacts ki permission do.", color = MUTE)
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(list) { (n, v) ->
+        if (showPhone) {
+            items(phone) { (n, v) ->
                 Soft(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(n, fontWeight = FontWeight.Bold, color = INK)
-                            Text(v, color = MUTE)
-                        }
-                        IconButton(onClick = { Store.deleteContact(c, n); list = Store.contacts(c).toList() }) {
-                            Icon(Icons.Filled.Delete, "Delete", tint = MUTE)
-                        }
-                    }
+                    Text(n, fontWeight = FontWeight.SemiBold, color = INK)
+                    Text(v, color = MUTE)
                 }
             }
         }
@@ -403,7 +441,7 @@ private fun SettingsTab() {
         Soft(Modifier.fillMaxWidth()) {
             Text("MAX ki awaaz", fontWeight = FontWeight.Bold, color = INK, modifier = Modifier.padding(bottom = 10.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Leda", "Aoede", "Zephyr", "Achernar", "Sulafat", "Kore").forEach { v ->
+                listOf("Leda", "Aoede", "Kore", "Zephyr", "Sulafat", "Achernar", "Callirrhoe", "Pulcherrima", "Puck", "Charon", "Fenrir", "Orus").forEach { v ->
                     Pill(v, voice == v) { voice = v; Store.setVoice(c, v) }
                 }
             }
@@ -413,6 +451,23 @@ private fun SettingsTab() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Pill("Hindi / Hinglish", lang == "hi-IN") { lang = "hi-IN"; Store.setLang(c, lang) }
                 Pill("English", lang == "en-IN") { lang = "en-IN"; Store.setLang(c, lang) }
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                var dark by remember { mutableStateOf(Theme.dark) }
+                Text("Dark mode", fontWeight = FontWeight.Bold, color = INK, modifier = Modifier.weight(1f))
+                Switch(checked = dark, onCheckedChange = { dark = it; Theme.dark = it; Store.setDark(c, it) })
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                var auto by remember { mutableStateOf(Store.autoSend(c)) }
+                Column(Modifier.weight(1f)) {
+                    Text("Message aur call bina pooche", fontWeight = FontWeight.Bold, color = INK)
+                    Text("On karoge to MAX WhatsApp message aur call bina haan bole kar degi. Risky hai, isliye default band hai.", color = MUTE, fontSize = 13.sp)
+                }
+                Switch(checked = auto, onCheckedChange = { auto = it; Store.setAutoSend(c, it) })
             }
         }
         Button(onClick = { Store.setDone(c, false); (c as? Activity)?.recreate() }) { Text("Permissions dobara dekho") }
@@ -425,7 +480,7 @@ private fun Nav(tab: Int, set: (Int) -> Unit, talk: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(14.dp)
             .shadow(10.dp, sh, ambientColor = Color(0xFF9DB4E0), spotColor = Color(0xFF9DB4E0))
-            .clip(sh).background(Color(0xFFF3F6FD)).padding(vertical = 8.dp),
+            .clip(sh).background(if (Theme.dark) Color(0xFF151C3A) else Color(0xFFF3F6FD)).padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
     ) {
         NavIcon(Icons.Filled.Home, "Home", tab == 0) { set(0) }

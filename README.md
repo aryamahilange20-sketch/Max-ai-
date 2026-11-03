@@ -69,3 +69,15 @@ Open MAX, paste the key, press Allow on each card, then "Ho gaya". On the Access
 - Wake word does nothing: check mic permission, that the notification "MAX jaag rahi hai" is visible, and that battery is set to No restrictions. Tap the orb as a fallback.
 - No voice or "Kuch gadbad ho gayi": wrong or expired Gemini key, or the free-tier rate limit. Settings tab > save the key again.
 - WhatsApp message opens but is not sent: accessibility service is off, or WhatsApp changed its Send button. Tap Send once manually.
+
+
+## Update (latest build)
+- Gemini: uses gemini-2.5-flash and gemini-2.5-flash-lite for chat. gemini-2.0-flash has been retired.
+- Wake word "MAX": quiet listening with a pause between rounds, so the mic does not loop or beep constantly.
+- Overlay permission on: a Siri-style glowing rim appears around the screen, with the MAX orb in the middle.
+- Voices: female (Leda, Aoede, Kore, Zephyr, Sulafat, Achernar, Callirrhoe, Pulcherrima) and male (Puck, Charon, Fenrir, Orus).
+- Calls: MAX announces incoming calls and asks to pick up. Pick up and hang up need the ANSWER_PHONE_CALLS permission, and some phones block this.
+- Photo opens the camera app. Android does not allow silent photos from another app.
+- Screenshot works through the accessibility service (Android 9 and above).
+- Yaadein shows every phone contact.
+- Settings: light/dark mode, and an option to send WhatsApp messages and calls without asking (off by default).

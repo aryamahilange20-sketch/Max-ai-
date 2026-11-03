@@ -3,7 +3,10 @@ package com.maxai.assistant
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.LinearGradient
+import android.graphics.Path
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RadialGradient
@@ -39,6 +42,7 @@ class NeonView(c: Context) : View(c) {
     private val cyan = 0xFF00F0FF.toInt()
     private val pink = 0xFFFF2BD6.toInt()
     private val vio = 0xFF8A5CFF.toInt()
+    private val logo: Bitmap? by lazy { runCatching { BitmapFactory.decodeResource(resources, R.drawable.max_orb) }.getOrNull() }
 
     private fun ring(cv: Canvas, cx: Float, cy: Float, r: Float, st: Float, sw: Float, col: Int, w: Float) {
         rect.set(cx - r, cy - r, cx + r, cy + r)
@@ -81,6 +85,14 @@ class NeonView(c: Context) : View(c) {
         p.style = Paint.Style.FILL
         cv.drawCircle(cx, cy, cr, p)
         p.shader = null
+        logo?.let { lg ->
+            val rr = cr * 0.92f
+            val clip = Path().apply { addCircle(cx, cy, rr, Path.Direction.CW) }
+            cv.save()
+            cv.clipPath(clip)
+            cv.drawBitmap(lg, null, RectF(cx - rr, cy - rr, cx + rr, cy + rr), null)
+            cv.restore()
+        }
 
         // rotating neon rings
         ring(cv, cx, cy, r, ang, 100f, cyan, 3f); ring(cv, cx, cy, r, ang + 180, 100f, cyan, 3f)
