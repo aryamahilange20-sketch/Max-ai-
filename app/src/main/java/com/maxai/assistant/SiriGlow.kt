@@ -41,6 +41,13 @@ class SiriGlow(private val c: Context) {
         }
     }
 
+    fun setLevel(f: Float) {
+        ui.post {
+            view?.level = f
+            view?.postInvalidate()
+        }
+    }
+
     fun hide() {
         ui.post {
             val v = view ?: return@post
@@ -53,6 +60,7 @@ class SiriGlow(private val c: Context) {
 class GlowView(c: Context) : View(c) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val rect = RectF()
+    var level = 0f
     private val t0 = SystemClock.uptimeMillis()
     private val dp = c.resources.displayMetrics.density
     private val colors = intArrayOf(0xFF00F0FF.toInt(), 0xFF8A5CFF.toInt(), 0xFFFF2BD6.toInt(), 0xFF00F0FF.toInt())
@@ -64,13 +72,13 @@ class GlowView(c: Context) : View(c) {
         val t = (SystemClock.uptimeMillis() - t0) / 1000f
         val sg = SweepGradient(w / 2, h / 2, colors, null)
         sg.setLocalMatrix(Matrix().apply { setRotate((t * 120f) % 360f, w / 2, h / 2) })
-        val inset = 6f * dp
+        val inset = 1f * dp
         rect.set(inset, inset, w - inset, h - inset)
         val r = 56f * dp
-        for ((sw, al, blur) in listOf(Triple(44f * dp, 110, true), Triple(14f * dp, 210, false), Triple(3.5f * dp, 255, false))) {
+        for ((sw, al, blur) in listOf(Triple(70f * dp, 120, true), Triple(22f * dp, 220, false), Triple(5f * dp, 255, false))) {
             p.shader = sg
             p.strokeWidth = sw
-            p.alpha = al
+            p.alpha = (al * (0.55f + level)).toInt().coerceIn(0, 255)
             p.maskFilter = if (blur) BlurMaskFilter(26f * dp, BlurMaskFilter.Blur.NORMAL) else null
             cv.drawRoundRect(rect, r, r, p)
         }

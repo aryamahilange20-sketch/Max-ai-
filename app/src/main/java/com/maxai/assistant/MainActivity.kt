@@ -64,6 +64,10 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -479,6 +483,70 @@ private fun SettingsTab() {
                     Text("On karoge to MAX WhatsApp message aur call bina haan bole kar degi. Risky hai, isliye default band hai.", color = MUTE, fontSize = 13.sp)
                 }
                 Switch(checked = auto, onCheckedChange = { auto = it; Store.setAutoSend(c, it) })
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            val scope = rememberCoroutineScope()
+            var status by remember { mutableStateOf(if (VoiceId.enrolled(c)) "Awaaz enrolled (${VoiceId.count(c)} samples)" else "Awaaz enroll nahi hui") }
+            Text("Boss ki awaaz", fontWeight = FontWeight.Bold, color = INK)
+            Text("5 baar bolo (3 sec each). MAX is awaaz se check karegi. Ye pakka lock nahi hai, phrase bhi rakho.", color = MUTE, fontSize = 13.sp)
+            Text(status, color = MUTE, fontSize = 13.sp)
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    scope.launch {
+                        val list = mutableListOf<DoubleArray>()
+                        for (i in 1..5) {
+                            status = "Bolo… ($i/5)"
+                            val pcm = withContext(Dispatchers.IO) { runCatching { VoiceId.record(3f) }.getOrDefault(ShortArray(0)) }
+                            if (VoiceId.rms(pcm) < 150.0) { status = "Awaaz kam thi, dobara bolo ($i/5)"; continue }
+                            list.add(withContext(Dispatchers.IO) { VoiceId.features(pcm) })
+                        }
+                        if (list.size >= 3) {
+                            VoiceId.save(c, list)
+                            status = "Awaaz enrolled (${list.size} samples)"
+                        } else {
+                            status = "Kam samples mile (${list.size}). Dobara try karo."
+                        }
+                    }
+                }) { Text("Awaaz enroll karo") }
+                Button(onClick = { VoiceId.clear(c); status = "Awaaz hata di" }) { Text("Awaaz hatao") }
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            var pw by remember { mutableStateOf(Store.ownerPass(c)) }
+            Text("Boss password", fontWeight = FontWeight.Bold, color = INK)
+            Text("Ye phrase bolne par hi MAX aadesh maanegi. Khali chhodo to lock band.", color = MUTE, fontSize = 13.sp)
+            OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Secret phrase") })
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { Store.setOwnerPass(c, pw) }) { Text("Save karo") }
+                Button(onClick = { Store.resetLock(c) }) { Text("Lock khol do") }
+            }
+            Text(if (Store.lockedOut(c)) "Status: 3 warnings ke baad LOCKED" else "Status: normal", color = MUTE, fontSize = 13.sp)
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            val scope = rememberCoroutineScope()
+            var results by remember { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
+            var running by remember { mutableStateOf(false) }
+            Text("Self-test", fontWeight = FontWeight.Bold, color = INK)
+            Text("Har part ko phone par check karta hai. PASS = theek, FAIL = kaam nahi kar raha, CHECK = khud dekho (torch, screenshot).", color = MUTE, fontSize = 13.sp)
+            Button(
+                onClick = {
+                    running = true
+                    scope.launch {
+                        results = withContext(Dispatchers.IO) { SelfTest.run(c) }
+                        running = false
+                    }
+                },
+                enabled = !running,
+                modifier = Modifier.padding(top = 8.dp)
+            ) { Text(if (running) "Chal raha hai..." else "Self-test chalao") }
+            results.forEach { (n, st, d) ->
+                Text(
+                    "$st  $n: $d",
+                    color = when (st) { "FAIL" -> Color(0xFFFF6B6B); "PASS" -> Color(0xFF5CE6A0); else -> INK },
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
         Button(onClick = { Store.setDone(c, false); (c as? Activity)?.recreate() }) { Text("Permissions dobara dekho") }

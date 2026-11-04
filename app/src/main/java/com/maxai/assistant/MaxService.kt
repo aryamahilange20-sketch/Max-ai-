@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -73,6 +74,7 @@ class MaxService : Service() {
     private var job: Job? = null
     private var busy = false
     @Volatile private var speaking = false
+    private var live: LiveSession? = null
     private val history = ArrayDeque<String>()
     private val wakeRe = Regex("(?i)\\bmax\\b|मैक्स")
     private val RESULTS = SpeechRecognizer.RESULTS_RECOGNITION
@@ -102,6 +104,7 @@ class MaxService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        live?.stop()
         rec?.destroy()
         speaker.stop()
         overlay.hide()
@@ -190,7 +193,56 @@ class MaxService : Service() {
         busy = true
         glow.show()
         overlay.state(1, "SUN RAHI HOON…")
-        if (rest.length > 2) handle(rest) else listenCommand()
+        if (VoiceId.enrolled(this) && !Store.unlockedNow(this)) {
+            job = scope.launch { voiceGate(rest) }
+            return
+        }
+        if (rest.length > 2) handle(rest) else startLiveOrListen()
+    }
+
+    /** Live voice when a key exists, otherwise the simple listening mode. */
+    private fun startLiveOrListen() {
+        if (Store.key(this).isBlank()) { listenCommand(); return }
+        startLive()
+    }
+
+    private fun startLive() {
+        busy = true
+        rec?.cancel()
+        speaker.stop()
+        glow.show()
+        live?.stop()
+        live = LiveSession(
+            this,
+            onLevel = { glow.setLevel(it) },
+            onText = { t -> lastReply.value = t; overlay.heard(t) },
+            onEnd = { live = null; glow.setLevel(0f); finish(0) }
+        ).also { it.start() }
+    }
+
+    /** Checks the boss's voice in the next 3 seconds, then runs the command or warns. */
+    private suspend fun voiceGate(rest: String) {
+        rec?.cancel()
+        if (Store.lockedOut(this)) {
+            speak("Main ab aadesh nahi maanungi. Boss Settings mein jaake unlock karein.")
+            finish(300)
+            return
+        }
+        overlay.state(1, "AWAAZ CHECK…")
+        val pcm = withContext(Dispatchers.IO) { runCatching { VoiceId.record(3f) }.getOrDefault(ShortArray(0)) }
+        if (VoiceId.rms(pcm) < 150.0) {
+            speak("Awaaz sunai nahi di, phir se bolo.")
+            finish(300)
+            return
+        }
+        val ok = withContext(Dispatchers.IO) { VoiceId.matches(this@MaxService, pcm) }
+        if (ok) {
+            Store.unlock(this)
+            if (rest.length > 2) handle(rest) else { speak("Haan boss, bolo."); startLiveOrListen() }
+        } else {
+            speak(Store.failed(this))
+            finish(300)
+        }
     }
 
     private fun listenCommand() {
@@ -250,6 +302,42 @@ class MaxService : Service() {
     /** Asks before a risky action, unless the user turned that check off in Settings. */
     private suspend fun confirm(q: String): Boolean = Store.autoSend(this) || askYesNo(q) == 1
 
+    /** Commands that work even if the AI model fails. */
+    private fun localCmd(text: String): String? {
+        val t = text.lowercase()
+        val off = listOf("off", "band", "bujha").any { it in t }
+        if ("torch" in t || "flash" in t || "टॉर्च" in t) {
+            actions.torch(!off)
+            return if (off) "Torch band kar di." else "Torch on kar di."
+        }
+        if ("screenshot" in t || "screen shot" in t) {
+            return if (screenshotAndShare()) "Screenshot le liya. Bhejne ke liye app chuno."
+            else "Screenshot ke liye Accessibility on karo."
+        }
+        if (Regex("\\b(home|ghar)\\b").containsMatchIn(t)) {
+            actions.global("home")
+            return "Home par chali gayi."
+        }
+        if ("volume" in t) {
+            val dir = if (listOf("kam", "down", "dhim").any { it in t }) "down" else "up"
+            actions.volume(dir)
+            return "Volume $dir kar diya."
+        }
+        val m = Regex("^(?:open|khol[oi]?)\\s+(.+)$").find(t) ?: Regex("^(.+?)\\s+khol(?:o|do|i)$").find(t)
+        if (m != null) {
+            val name = m.groupValues[1].trim()
+            return if (actions.openApp(name)) "$name khol di." else "$name app nahi mila."
+        }
+        return null
+    }
+
+    /** Takes a screenshot, then opens the share sheet with it. */
+    private fun screenshotAndShare(): Boolean {
+        if (!actions.global("screenshot")) return false
+        ui.postDelayed({ actions.latestScreenshotUri()?.let { actions.shareImage(it) } }, 1500)
+        return true
+    }
+
     /** After a reply, keep listening so the user can continue without saying "MAX" again. */
     private fun followUp() {
         ui.postDelayed({ listenCommand() }, 600)
@@ -294,6 +382,18 @@ class MaxService : Service() {
             val ctx = this@MaxService
             var hideAfter = 700L
             try {
+                val blocked = Store.guard(ctx, text)
+                if (blocked != null) {
+                    speak(blocked)
+                    followUp()
+                    return@launch
+                }
+                val local = localCmd(text)
+                if (local != null) {
+                    speak(local)
+                    followUp()
+                    return@launch
+                }
                 val plan = withContext(Dispatchers.IO) { Gemini.plan(ctx, text, history.joinToString("\n")) }
                 val a = plan.optString("action", "chat")
                 val g = plan.optJSONObject("args") ?: JSONObject()
@@ -326,7 +426,7 @@ class MaxService : Service() {
                     "note_add" -> Store.addNote(ctx, g.optString("text"))
                     "note_read" -> say = Store.notes(ctx).takeLast(5).joinToString(". ").ifEmpty { "Abhi koi note nahi hai." }
                     "system" -> if (!actions.global(g.optString("cmd"))) say = noA11y
-                    "screenshot" -> if (!actions.global("screenshot")) say = noA11y
+                    "screenshot" -> if (!screenshotAndShare()) say = noA11y
                     "photo" -> if (!actions.photo()) say = "Camera app nahi khul paya."
                     "answer_call" -> if (!actions.answerCall()) say = "Call uthane ki permission nahi hai."
                     "reject_call" -> if (!actions.hangUp()) say = "Call kaatne ki permission nahi hai."
@@ -340,6 +440,21 @@ class MaxService : Service() {
                         else {
                             val ok = list.count { actions.sms(it.second, msg) }
                             say = "$ok logon ko SMS bhej diya."
+                        }
+                    }
+                    "chatgpt" -> {
+                        val prompt = g.optString("prompt").ifBlank { text }
+                        if (!actions.openChatGpt()) say = "ChatGPT app is phone par install nahi hai."
+                        else {
+                            delay(3000)
+                            val typed = actions.type(prompt)
+                            delay(600)
+                            val sent = actions.clickDesc("Send") || actions.click("Send")
+                            say = when {
+                                !typed -> "ChatGPT khul gayi, par text box mein likh nahi paayi. Wahan khud likho."
+                                !sent -> "Prompt likh diya, par send button nahi mila. Wahan send dabao."
+                                else -> "ChatGPT mein bhej diya. Jawab wahin dekho."
+                            }
                         }
                     }
                     "ui_click" -> if (!actions.click(g.optString("text"))) say = "Screen par ye mujhe nahi dikha."

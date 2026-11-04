@@ -70,6 +70,19 @@ class MaxAccessibilityService : AccessibilityService() {
         return sb.toString()
     }
 
+    /** Clicks the first clickable item whose description contains the text (e.g. "Send"). */
+    fun clickDesc(d: String): Boolean {
+        fun find(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (n == null) return null
+            if (n.contentDescription?.toString()?.contains(d, ignoreCase = true) == true) return n
+            for (i in 0 until n.childCount) find(n.getChild(i))?.let { return it }
+            return null
+        }
+        var x: AccessibilityNodeInfo = find(rootInActiveWindow) ?: return false
+        while (!x.isClickable) { x = x.parent ?: break }
+        return x.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
     /** WhatsApp takes a moment to open the chat, so retry for ~8 seconds. */
     fun clickWhatsAppSend(attempt: Int = 0) {
         val r = rootInActiveWindow

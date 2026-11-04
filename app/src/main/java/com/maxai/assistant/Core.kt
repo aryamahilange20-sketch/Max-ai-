@@ -37,6 +37,45 @@ object Store {
     fun setAutoSend(c: Context, v: Boolean) = p(c).edit().putBoolean("autosend", v).apply()
     fun dark(c: Context) = p(c).getBoolean("dark", true)
     fun setDark(c: Context, v: Boolean) = p(c).edit().putBoolean("dark", v).apply()
+
+    // ---- boss password lock
+    fun ownerPass(c: Context): String = p(c).getString("passwd", "") ?: ""
+    fun setOwnerPass(c: Context, s: String) = p(c).edit().putString("passwd", s.trim()).apply()
+    fun lockedOut(c: Context) = p(c).getBoolean("lockout", false)
+    fun unlock(c: Context) = p(c).edit().putLong("unlock_until", System.currentTimeMillis() + 10 * 60_000L).putInt("wrong", 0).apply()
+    fun unlockedNow(c: Context) = System.currentTimeMillis() < p(c).getLong("unlock_until", 0L)
+    /** Counts a failed voice/password check and returns what MAX should say. */
+    fun failed(c: Context): String {
+        if (lockedOut(c)) return "Main ab aadesh nahi maanungi. Boss Settings mein jaake unlock karein."
+        val n = p(c).getInt("wrong", 0) + 1
+        p(c).edit().putInt("wrong", n).apply()
+        if (n >= 3) {
+            p(c).edit().putBoolean("lockout", true).apply()
+            return "Mujhe nahi pata ye kaun hai. Main aadesh nahi maanungi."
+        }
+        return "Tum mere boss nahi ho. Warning $n of 3."
+    }
+    fun resetLock(c: Context) = p(c).edit().putBoolean("lockout", false).putInt("wrong", 0).putLong("unlock_until", 0L).apply()
+
+    /** Returns a spoken reply if MAX must refuse, or null if the command may run. */
+    fun guard(c: Context, text: String): String? {
+        val pass = ownerPass(c)
+        if (pass.isBlank()) return null
+        if (lockedOut(c)) return "Main ab aadesh nahi maanungi. Boss Settings mein jaake unlock karein."
+        val now = System.currentTimeMillis()
+        if (now < p(c).getLong("unlock_until", 0L)) return null
+        if (text.lowercase().contains(pass.lowercase())) {
+            p(c).edit().putLong("unlock_until", now + 10 * 60_000L).putInt("wrong", 0).apply()
+            return "Haan boss, main sun rahi hoon."
+        }
+        val n = p(c).getInt("wrong", 0) + 1
+        p(c).edit().putInt("wrong", n).apply()
+        if (n >= 3) {
+            p(c).edit().putBoolean("lockout", true).apply()
+            return "Mujhe nahi pata ye kaun hai. Main aadesh nahi maanungi."
+        }
+        return "Tum mere boss nahi ho. Boss ka password bolo. Warning $n of 3."
+    }
     fun emergencyNames(c: Context): Set<String> {
         val a = JSONArray(p(c).getString("emergency", "[]") ?: "[]")
         return (0 until a.length()).map { a.getString(it) }.toSet()
@@ -182,6 +221,7 @@ Actions:
 - answer_call: {} pick up the ringing call. reject_call: {} end the call.
 - contacts: {} list the names in the phone's contacts.
 - emergency_sms: {"message"} send an SMS to the contacts marked Emergency (SOS) in Yaadein.
+- chatgpt: {"prompt"} open the ChatGPT app and send this text to it (for chat or image requests).
 Saved contacts in MAX: $contacts
 For call and whatsapp use the exact saved name from that list when it matches, otherwise the spoken name. Never refuse; if unsure pick the closest action or chat.
 """.trimIndent()

@@ -2,6 +2,8 @@ package com.maxai.assistant
 
 import android.Manifest
 import android.content.Context
+import android.content.ContentUris
+import android.net.Uri
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
@@ -124,6 +126,36 @@ class Actions(private val c: Context) {
     fun sms(number: String, msg: String): Boolean {
         if (number.isBlank() || !has(Manifest.permission.SEND_SMS)) return false
         return runCatching { android.telephony.SmsManager.getDefault().sendTextMessage(number, null, msg, null, null) }.isSuccess
+    }
+
+    /** Opens the ChatGPT app if it is installed. */
+    fun openChatGpt(): Boolean = runCatching {
+        val i = c.packageManager.getLaunchIntentForPackage("com.openai.chatgpt") ?: return false
+        start(i)
+        true
+    }.getOrDefault(false)
+
+    fun clickDesc(d: String) = a?.clickDesc(d) ?: false
+
+    /** Newest screenshot file from the gallery, if the app may read images. */
+    fun latestScreenshotUri(): Uri? {
+        if (!has(Manifest.permission.READ_MEDIA_IMAGES) && !has(Manifest.permission.READ_EXTERNAL_STORAGE)) return null
+        c.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?", arrayOf("%creenshot%"),
+            "${MediaStore.Images.Media.DATE_ADDED} DESC"
+        )?.use {
+            if (it.moveToFirst()) return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, it.getLong(0))
+        }
+        return null
+    }
+
+    /** Opens the Android share sheet with the image, so the user picks WhatsApp, SMS or a contact. */
+    fun shareImage(uri: Uri) {
+        val i = Intent(Intent.ACTION_SEND).setType("image/*")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        start(Intent.createChooser(i, "Screenshot kisko bhejna hai?"))
     }
 
     fun global(cmd: String) = a?.global(cmd) ?: false
