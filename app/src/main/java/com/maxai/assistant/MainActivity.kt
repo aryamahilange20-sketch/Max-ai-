@@ -40,7 +40,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -342,24 +341,25 @@ private fun ContactsTab() {
     var phone by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showPhone by remember { mutableStateOf(false) }
     val hasPerm = c.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-    LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Yaadein", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = INK) }
-        item { Text("Yahan save number par MAX call aur WhatsApp karega. Phone ke contacts bhi dikh sakte hain.", color = MUTE) }
-        item {
-            Soft(Modifier.fillMaxWidth()) {
-                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Naam") })
-                OutlinedTextField(num, { num = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Number (+91...)") })
-                Button(
-                    onClick = {
-                        if (name.isNotBlank() && num.isNotBlank()) {
-                            Store.saveContact(c, name, num); list = Store.contacts(c).toList(); name = ""; num = ""
-                        }
-                    },
-                    modifier = Modifier.padding(top = 10.dp)
-                ) { Text("Save karo") }
-            }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Yaadein", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = INK)
+        Text("Yahan save number par MAX call aur WhatsApp karega. Phone ke contacts bhi dikh sakte hain.", color = MUTE)
+        Soft(Modifier.fillMaxWidth()) {
+            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Naam") })
+            OutlinedTextField(num, { num = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Number (+91...)") })
+            Button(
+                onClick = {
+                    if (name.isNotBlank() && num.isNotBlank()) {
+                        Store.saveContact(c, name, num); list = Store.contacts(c).toList(); name = ""; num = ""
+                    }
+                },
+                modifier = Modifier.padding(top = 10.dp)
+            ) { Text("Save karo") }
         }
-        items(list) { (n, v) ->
+        list.forEach { (n, v) ->
             Soft(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -372,18 +372,16 @@ private fun ContactsTab() {
                 }
             }
         }
-        item {
-            Button(
-                onClick = {
-                    if (!showPhone) phone = Actions(c).allContacts()
-                    showPhone = !showPhone
-                },
-                enabled = hasPerm
-            ) { Text(if (showPhone) "Phone contacts chhupao" else "Phone ke saare contacts dikhao") }
-            if (!hasPerm) Text("Pehle Setup mein Contacts ki permission do.", color = MUTE)
-        }
+        Button(
+            onClick = {
+                if (!showPhone) phone = Actions(c).allContacts()
+                showPhone = !showPhone
+            },
+            enabled = hasPerm
+        ) { Text(if (showPhone) "Phone contacts chhupao" else "Phone ke saare contacts dikhao") }
+        if (!hasPerm) Text("Pehle Setup mein Contacts ki permission do.", color = MUTE)
         if (showPhone) {
-            items(phone) { (n, v) ->
+            phone.forEach { (n, v) ->
                 Soft(Modifier.fillMaxWidth()) {
                     Text(n, fontWeight = FontWeight.SemiBold, color = INK)
                     Text(v, color = MUTE)

@@ -54,7 +54,7 @@ class Actions(private val c: Context) {
     /** Name of a number from the phone's contacts, or null. */
     fun nameFor(number: String): String? {
         if (number.isBlank() || !has(Manifest.permission.READ_CONTACTS)) return null
-        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_URI, Uri.encode(number))
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
         c.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)
             ?.use { if (it.moveToFirst()) return it.getString(0) }
         return null
