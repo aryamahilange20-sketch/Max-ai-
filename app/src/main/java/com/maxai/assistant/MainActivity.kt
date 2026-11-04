@@ -80,6 +80,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -246,7 +247,7 @@ private fun Main() {
     var tab by remember { mutableIntStateOf(0) }
     val on by MaxService.running.collectAsState()
     LaunchedEffect(Unit) { if (!MaxService.running.value) MaxService.send(c, "START") }
-    Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(if (Theme.dark) listOf(Color(0xFF0B1024), Color(0xFF1B1247)) else listOf(Color(0xFFD9E4F5), Color(0xFFC4D6F7)))).systemBarsPadding()) {
         Box(Modifier.weight(1f)) {
             when (tab) { 0 -> Home(on); 1 -> ContactsTab(); 2 -> NotesTab(); else -> SettingsTab() }
         }
@@ -277,7 +278,7 @@ private fun Orb(onClick: () -> Unit) {
             arc(r * 0.68f, -a * 1.4f, PK, 4f); arc(r * 0.68f, -a * 1.4f + 180, PK, 4f)
             drawCircle(Brush.radialGradient(listOf(Color.White, PK, Color.Transparent), c, r * 0.4f * p), r * 0.4f * p, c)
         }
-        Image(painterResource(R.drawable.max_orb), "MAX", Modifier.size(150.dp).clip(CircleShape))
+        Image(painterResource(R.drawable.max_orb), "MAX", Modifier.size(150.dp).graphicsLayer { scaleX = p; scaleY = p }.clip(CircleShape))
     }
 }
 
