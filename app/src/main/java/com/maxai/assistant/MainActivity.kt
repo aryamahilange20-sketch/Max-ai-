@@ -143,7 +143,10 @@ class MainActivity : ComponentActivity() {
             { askMany.launch(arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_STATE)) }),
         Perm("Call uthana aur kaatna", "Tumhare kehne par call uthana ya kaatna.", false,
             { granted(Manifest.permission.ANSWER_PHONE_CALLS) },
-            { askMany.launch(arrayOf(Manifest.permission.ANSWER_PHONE_CALLS)) })
+            { askMany.launch(arrayOf(Manifest.permission.ANSWER_PHONE_CALLS)) }),
+        Perm("SMS emergency", "Emergency mein SOS wale saved numbers ko SMS bhejne ke liye.", false,
+            { granted(Manifest.permission.SEND_SMS) },
+            { askMany.launch(arrayOf(Manifest.permission.SEND_SMS)) })
     )
 
     override fun onResume() { super.onResume(); tick++ }
@@ -338,6 +341,7 @@ private fun ContactsTab() {
     var name by remember { mutableStateOf("") }
     var num by remember { mutableStateOf("") }
     var list by remember { mutableStateOf(Store.contacts(c).toList()) }
+    var emer by remember { mutableStateOf(Store.emergencyNames(c)) }
     var phone by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showPhone by remember { mutableStateOf(false) }
     val hasPerm = c.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -346,7 +350,7 @@ private fun ContactsTab() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Yaadein", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = INK)
-        Text("Yahan save number par MAX call aur WhatsApp karega. Phone ke contacts bhi dikh sakte hain.", color = MUTE)
+        Text("Yahan save number par MAX call aur WhatsApp karega. SOS ON wale contacts ko emergency SMS jayega.", color = MUTE)
         Soft(Modifier.fillMaxWidth()) {
             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Naam") })
             OutlinedTextField(num, { num = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Number (+91...)") })
@@ -360,13 +364,21 @@ private fun ContactsTab() {
             ) { Text("Save karo") }
         }
         list.forEach { (n, v) ->
+            val on = n in emer
             Soft(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(n, fontWeight = FontWeight.Bold, color = INK)
                         Text(v, color = MUTE)
                     }
-                    IconButton(onClick = { Store.deleteContact(c, n); list = Store.contacts(c).toList() }) {
+                    Pill(if (on) "SOS ON" else "SOS", on) {
+                        Store.setEmergency(c, n, !on)
+                        emer = Store.emergencyNames(c)
+                    }
+                    IconButton(onClick = {
+                        Store.deleteContact(c, n); Store.setEmergency(c, n, false)
+                        list = Store.contacts(c).toList(); emer = Store.emergencyNames(c)
+                    }) {
                         Icon(Icons.Filled.Delete, "Delete", tint = MUTE)
                     }
                 }

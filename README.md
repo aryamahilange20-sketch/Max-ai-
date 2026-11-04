@@ -81,3 +81,6 @@ Open MAX, paste the key, press Allow on each card, then "Ho gaya". On the Access
 - Screenshot works through the accessibility service (Android 9 and above).
 - Yaadein shows every phone contact.
 - Settings: light/dark mode, and an option to send WhatsApp messages and calls without asking (off by default).
+- Wake word: after "MAX" only the glowing screen rim shows, no orb. MAX does not listen to its own voice, so it does not loop or cut itself off.
+- After each reply MAX keeps listening for a follow-up, so you can talk without saying "MAX" every time.
+- Emergency: mark contacts with SOS in Yaadein, then say "emergency SMS bhejo". MAX asks first, unless the "bina pooche" setting is on. Needs SEND_SMS permission.

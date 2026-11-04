@@ -37,6 +37,19 @@ object Store {
     fun setAutoSend(c: Context, v: Boolean) = p(c).edit().putBoolean("autosend", v).apply()
     fun dark(c: Context) = p(c).getBoolean("dark", true)
     fun setDark(c: Context, v: Boolean) = p(c).edit().putBoolean("dark", v).apply()
+    fun emergencyNames(c: Context): Set<String> {
+        val a = JSONArray(p(c).getString("emergency", "[]") ?: "[]")
+        return (0 until a.length()).map { a.getString(it) }.toSet()
+    }
+    fun setEmergency(c: Context, name: String, on: Boolean) {
+        val s = emergencyNames(c).toMutableSet()
+        if (on) s.add(name) else s.remove(name)
+        p(c).edit().putString("emergency", JSONArray(s.toList()).toString()).apply()
+    }
+    fun emergencyContacts(c: Context): List<Pair<String, String>> {
+        val names = emergencyNames(c)
+        return contacts(c).filterKeys { it in names }.map { it.key to it.value }
+    }
 
     fun contacts(c: Context): Map<String, String> {
         val o = JSONObject(p(c).getString("contacts", "{}") ?: "{}")
@@ -66,8 +79,39 @@ object Store {
 object Gemini {
     private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
     // Tried in order. If one model is unavailable on the free tier, the next one is used.
-    private val CHAT_MODELS = listOf("gemini-2.5-flash", "gemini-2.5-flash-lite")
-    private val TTS_MODELS = listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts")
+    private var cachedChat: List<String>? = null
+    private var cachedTts: List<String>? = null
+
+    /** Asks Google which models this API key can use right now, newest first. */
+    private fun discover(c: Context, want: (String) -> Boolean): List<String> = runCatching {
+        val h = (URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 10000; readTimeout = 10000
+            setRequestProperty("x-goog-api-key", Store.key(c))
+        }
+        val arr = JSONObject(h.inputStream.bufferedReader().readText()).getJSONArray("models")
+        (0 until arr.length()).map { arr.getJSONObject(it) }
+            .filter { m ->
+                val methods = m.optJSONArray("supportedGenerationMethods")
+                methods != null && (0 until methods.length()).any { methods.getString(it) == "generateContent" }
+            }
+            .map { it.getString("name").removePrefix("models/") }
+            .filter(want)
+            .sortedDescending()
+    }.getOrDefault(emptyList())
+
+    private fun chatModels(c: Context): List<String> {
+        cachedChat?.let { return it }
+        val found = discover(c) { n ->
+            n.startsWith("gemini-") && "flash" in n && listOf("tts", "image", "live", "embed", "audio", "native").none { it in n }
+        }
+        return (found.ifEmpty { listOf("gemini-2.5-flash", "gemini-2.5-flash-lite") }).also { cachedChat = it }
+    }
+
+    private fun ttsModels(c: Context): List<String> {
+        cachedTts?.let { return it }
+        val found = discover(c) { it.startsWith("gemini-") && "tts" in it }
+        return (found.ifEmpty { listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts") }).also { cachedTts = it }
+    }
     private const val VOICE_SYS =
         "You are MAX, a warm Indian girl assistant speaking aloud. Answer in at most 4 short sentences, in the user's language " +
             "(Hindi in Devanagari with English words in Latin script, or English). No markdown, lists or emojis."
@@ -137,6 +181,7 @@ Actions:
 - photo: {} open the camera. screenshot: {} take a screenshot.
 - answer_call: {} pick up the ringing call. reject_call: {} end the call.
 - contacts: {} list the names in the phone's contacts.
+- emergency_sms: {"message"} send an SMS to the contacts marked Emergency (SOS) in Yaadein.
 Saved contacts in MAX: $contacts
 For call and whatsapp use the exact saved name from that list when it matches, otherwise the spoken name. Never refuse; if unsure pick the closest action or chat.
 """.trimIndent()
@@ -144,18 +189,18 @@ For call and whatsapp use the exact saved name from that list when it matches, o
     fun plan(c: Context, user: String, history: String): JSONObject {
         val sys = planPrompt(Store.contacts(c).keys.joinToString(", ").ifEmpty { "none" })
         val msg = if (history.isBlank()) user else "Earlier:\n$history\n\nUser now: $user"
-        val t = text(call(c, CHAT_MODELS, body(sys, msg, json = true)))
+        val t = text(call(c, chatModels(c), body(sys, msg, json = true)))
         return JSONObject(t.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
     }
 
     fun ask(c: Context, user: String, search: Boolean = false): String =
-        text(call(c, CHAT_MODELS, body(VOICE_SYS, user, search = search))).trim()
+        text(call(c, chatModels(c), body(VOICE_SYS, user, search = search))).trim()
 
     /** Streams a full HTML page; onChunk receives each piece as it is written (for the transparent code screen). */
     fun streamHtml(c: Context, brief: String, onChunk: (String) -> Unit): String {
         val sys = "You are an expert front-end designer. Output ONLY one complete, self-contained, beautiful, responsive HTML file " +
             "(inline CSS and JS, Google Fonts allowed, no other external files). No explanations, no markdown fences."
-        val h = conn(c, CHAT_MODELS.first(), "streamGenerateContent?alt=sse")
+        val h = conn(c, chatModels(c).first(), "streamGenerateContent?alt=sse")
         send(h, body(sys, brief))
         val sb = StringBuilder()
         h.inputStream.bufferedReader().forEachLine { l ->
@@ -174,7 +219,7 @@ For call and whatsapp use the exact saved name from that list when it matches, o
             .put("generationConfig", JSONObject()
                 .put("responseModalities", JSONArray().put("AUDIO"))
                 .put("speechConfig", JSONObject().put("voiceConfig", JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", Store.voice(c))))))
-        val d = call(c, TTS_MODELS, b).getJSONArray("candidates").getJSONObject(0).getJSONObject("content")
+        val d = call(c, ttsModels(c), b).getJSONArray("candidates").getJSONObject(0).getJSONObject("content")
             .getJSONArray("parts").getJSONObject(0).getJSONObject("inlineData").getString("data")
         return Base64.decode(d, Base64.DEFAULT)
     }

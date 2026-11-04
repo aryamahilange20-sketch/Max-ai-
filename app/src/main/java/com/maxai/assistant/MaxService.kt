@@ -72,6 +72,7 @@ class MaxService : Service() {
     private var rec: SpeechRecognizer? = null
     private var job: Job? = null
     private var busy = false
+    @Volatile private var speaking = false
     private val history = ArrayDeque<String>()
     private val wakeRe = Regex("(?i)\\bmax\\b|मैक्स")
     private val RESULTS = SpeechRecognizer.RESULTS_RECOGNITION
@@ -156,7 +157,7 @@ class MaxService : Service() {
 
     /** Always-on, quiet loop that waits for the word "MAX". */
     private fun listenWake() {
-        if (!hasMic() || busy) return
+        if (!hasMic() || busy || speaking) return
         val r = fresh()
         r.setRecognitionListener(object : L() {
             override fun onPartialResults(b: Bundle?) { check(b) }
@@ -174,7 +175,7 @@ class MaxService : Service() {
     }
 
     private fun check(b: Bundle?): Boolean {
-        if (busy) return true
+        if (busy || speaking) return true
         val t = b?.getStringArrayList(RESULTS)?.firstOrNull() ?: return false
         val m = wakeRe.find(t) ?: return false
         busy = true
@@ -188,7 +189,6 @@ class MaxService : Service() {
         speaker.stop()
         busy = true
         glow.show()
-        overlay.show { cancelAll() }
         overlay.state(1, "SUN RAHI HOON…")
         if (rest.length > 2) handle(rest) else listenCommand()
     }
@@ -250,13 +250,17 @@ class MaxService : Service() {
     /** Asks before a risky action, unless the user turned that check off in Settings. */
     private suspend fun confirm(q: String): Boolean = Store.autoSend(this) || askYesNo(q) == 1
 
+    /** After a reply, keep listening so the user can continue without saying "MAX" again. */
+    private fun followUp() {
+        ui.postDelayed({ listenCommand() }, 600)
+    }
+
     // ---------- incoming calls ----------
 
     private fun incomingCall(num: String) {
         if (busy) return
         busy = true
         glow.show()
-        overlay.show { cancelAll() }
         overlay.state(1, "CALL AAYI HAI…")
         job = scope.launch {
             val who = withContext(Dispatchers.IO) { actions.nameFor(num) } ?: num.ifBlank { "Ek unknown number" }
@@ -276,7 +280,8 @@ class MaxService : Service() {
         lastReply.value = t
         overlay.state(3, "BOL RAHI HOON…")
         overlay.heard(t)
-        speaker.say(t) { overlay.level(it) }
+        speaking = true
+        try { speaker.say(t) { overlay.level(it) } } finally { speaking = false }
     }
 
     private fun handle(text: String) {
@@ -327,6 +332,16 @@ class MaxService : Service() {
                     "reject_call" -> if (!actions.hangUp()) say = "Call kaatne ki permission nahi hai."
                     "contacts" -> say = withContext(Dispatchers.IO) { actions.allContacts() }
                         .take(10).joinToString(", ") { it.first }.ifEmpty { "Phone mein koi contact nahi mila." }
+                    "emergency_sms" -> {
+                        val msg = g.optString("message").ifBlank { "Mujhe madad chahiye. Please jaldi call karo." }
+                        val list = Store.emergencyContacts(ctx)
+                        if (list.isEmpty()) say = "Pehle Yaadein mein contact par Emergency ON karo."
+                        else if (!confirm("${list.size} emergency contact ko ye SMS bhejun: $msg. Haan ya na bolo.")) say = "Theek hai, SMS nahi bheja."
+                        else {
+                            val ok = list.count { actions.sms(it.second, msg) }
+                            say = "$ok logon ko SMS bhej diya."
+                        }
+                    }
                     "ui_click" -> if (!actions.click(g.optString("text"))) say = "Screen par ye mujhe nahi dikha."
                     "ui_type" -> if (!actions.type(g.optString("text"))) say = "Koi text box select nahi hai."
                     "ui_scroll" -> if (!actions.scroll(g.optString("dir"))) say = noA11y
@@ -347,7 +362,7 @@ class MaxService : Service() {
             } catch (e: Exception) {
                 speak("Kuch gadbad ho gayi. ${e.message.orEmpty().take(90)}")
             }
-            finish(hideAfter)
+            followUp()
         }
     }
 

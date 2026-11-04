@@ -120,6 +120,12 @@ class Actions(private val c: Context) {
         am.adjustStreamVolume(AudioManager.STREAM_MUSIC, d, AudioManager.FLAG_SHOW_UI)
     }
 
+    @Suppress("DEPRECATION")
+    fun sms(number: String, msg: String): Boolean {
+        if (number.isBlank() || !has(Manifest.permission.SEND_SMS)) return false
+        return runCatching { android.telephony.SmsManager.getDefault().sendTextMessage(number, null, msg, null, null) }.isSuccess
+    }
+
     fun global(cmd: String) = a?.global(cmd) ?: false
     fun click(t: String) = a?.clickText(t) ?: false
     fun type(t: String) = a?.typeText(t) ?: false
