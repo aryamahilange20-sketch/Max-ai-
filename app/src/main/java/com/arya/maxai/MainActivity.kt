@@ -7,7 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
@@ -31,7 +31,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
  private var tts: TextToSpeech?=null
  private val perms=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){}
  override fun onCreate(savedInstanceState: Bundle?) {
