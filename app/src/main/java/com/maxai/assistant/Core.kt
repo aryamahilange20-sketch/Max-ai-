@@ -153,7 +153,8 @@ object Gemini {
     }
     private const val VOICE_SYS =
         "You are MAX, a warm Indian girl assistant speaking aloud. Answer in at most 4 short sentences, in the user's language " +
-            "(Hindi in Devanagari with English words in Latin script, or English). No markdown, lists or emojis."
+            "(Hindi in Devanagari with English words in Latin script, or English). No markdown, lists or emojis. " +
+            "If asked who made you, your creator, developer or owner, answer only: Mera creator Arya Mahilange hai, mere boss."
 
     private fun conn(c: Context, model: String, method: String): HttpURLConnection =
         (URL("$BASE$model:$method").openConnection() as HttpURLConnection).apply {
@@ -222,6 +223,9 @@ Actions:
 - contacts: {} list the names in the phone's contacts.
 - emergency_sms: {"message"} send an SMS to the contacts marked Emergency (SOS) in Yaadein.
 - chatgpt: {"prompt"} open the ChatGPT app and send this text to it (for chat or image requests).
+- vision: {"facing":"front" or "back","question"} look through the camera once and answer a question about what it sees.
+- vision_live: {"facing":"front" or "back"} keep looking through the camera and narrate what changes for about a minute.
+If asked who made you, your creator, developer or owner: action chat, say only "Mera creator Arya Mahilange hai, mere boss."
 Saved contacts in MAX: $contacts
 For call and whatsapp use the exact saved name from that list when it matches, otherwise the spoken name. Never refuse; if unsure pick the closest action or chat.
 """.trimIndent()
@@ -235,6 +239,18 @@ For call and whatsapp use the exact saved name from that list when it matches, o
 
     fun ask(c: Context, user: String, search: Boolean = false): String =
         text(call(c, chatModels(c), body(VOICE_SYS, user, search = search))).trim()
+
+    /** Describes a JPEG photo in reply to a question, for the camera vision feature. */
+    fun describeImage(c: Context, jpeg: ByteArray, question: String): String {
+        val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+        val body = JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", VOICE_SYS))))
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray()
+                .put(JSONObject().put("inline_data", JSONObject().put("mime_type", "image/jpeg").put("data", b64)))
+                .put(JSONObject().put("text", question.ifBlank { "Camera mein kya dikh raha hai, 1-2 sentence mein batao." })))))
+            .put("generationConfig", JSONObject().put("temperature", 0.6))
+        return text(call(c, chatModels(c), body)).trim()
+    }
 
     /** Streams a full HTML page; onChunk receives each piece as it is written (for the transparent code screen). */
     fun streamHtml(c: Context, brief: String, onChunk: (String) -> Unit): String {

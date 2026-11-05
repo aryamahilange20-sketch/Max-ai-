@@ -192,7 +192,7 @@ class MaxService : Service() {
         speaker.stop()
         busy = true
         glow.show()
-        overlay.state(1, "SUN RAHI HOON…")
+        glow.state("SUN RAHI HOON…")
         if (VoiceId.enrolled(this) && !Store.unlockedNow(this)) {
             job = scope.launch { voiceGate(rest) }
             return
@@ -215,7 +215,7 @@ class MaxService : Service() {
         live = LiveSession(
             this,
             onLevel = { glow.setLevel(it) },
-            onText = { t -> lastReply.value = t; overlay.heard(t) },
+            onText = { t -> lastReply.value = t; glow.heard(t) },
             onEnd = { live = null; glow.setLevel(0f); finish(0) }
         ).also { it.start() }
     }
@@ -228,7 +228,7 @@ class MaxService : Service() {
             finish(300)
             return
         }
-        overlay.state(1, "AWAAZ CHECK…")
+        glow.state("AWAAZ CHECK…")
         val pcm = withContext(Dispatchers.IO) { runCatching { VoiceId.record(3f) }.getOrDefault(ShortArray(0)) }
         if (VoiceId.rms(pcm) < 150.0) {
             speak("Awaaz sunai nahi di, phir se bolo.")
@@ -248,8 +248,8 @@ class MaxService : Service() {
     private fun listenCommand() {
         val r = fresh()
         r.setRecognitionListener(object : L() {
-            override fun onRmsChanged(v: Float) { overlay.level(((v + 2f) / 12f).coerceIn(0f, 1f)) }
-            override fun onPartialResults(b: Bundle?) { b?.getStringArrayList(RESULTS)?.firstOrNull()?.let { overlay.heard(it) } }
+            override fun onRmsChanged(v: Float) { glow.setLevel(((v + 2f) / 12f).coerceIn(0f, 1f)) }
+            override fun onPartialResults(b: Bundle?) { b?.getStringArrayList(RESULTS)?.firstOrNull()?.let { glow.heard(it) } }
             override fun onResults(b: Bundle?) {
                 val t = b?.getStringArrayList(RESULTS)?.firstOrNull().orEmpty()
                 if (t.isBlank()) finish() else handle(t)
@@ -285,7 +285,7 @@ class MaxService : Service() {
                 override fun onResults(b: Bundle?) { d.complete(b?.getStringArrayList(RESULTS)?.firstOrNull()) }
                 override fun onError(e: Int) { d.complete(null) }
             })
-            overlay.state(1, "HAAN YA NA BOLO…")
+            glow.state("HAAN YA NA BOLO…")
             quiet { r.startListening(intent(Store.lang(this))) }
         }
         val heard = (withTimeoutOrNull(9000) { d.await() } ?: "").lowercase()
@@ -305,6 +305,9 @@ class MaxService : Service() {
     /** Commands that work even if the AI model fails. */
     private fun localCmd(text: String): String? {
         val t = text.lowercase()
+        if (listOf("creator", "developer", "kisne banaya", "tumhe kisne", "tumhara malik", "tumhara owner", "tumhara boss kaun").any { it in t }) {
+            return "Mera creator Arya Mahilange hai, mere boss."
+        }
         val off = listOf("off", "band", "bujha").any { it in t }
         if ("torch" in t || "flash" in t || "टॉर्च" in t) {
             actions.torch(!off)
@@ -349,7 +352,7 @@ class MaxService : Service() {
         if (busy) return
         busy = true
         glow.show()
-        overlay.state(1, "CALL AAYI HAI…")
+        glow.state("CALL AAYI HAI…")
         job = scope.launch {
             val who = withContext(Dispatchers.IO) { actions.nameFor(num) } ?: num.ifBlank { "Ek unknown number" }
             when (askYesNo("$who ka call aa raha hai. Uthaun? Haan ya na bolo.")) {
@@ -366,17 +369,17 @@ class MaxService : Service() {
     private suspend fun speak(t: String) {
         if (t.isBlank()) return
         lastReply.value = t
-        overlay.state(3, "BOL RAHI HOON…")
-        overlay.heard(t)
+        glow.state("BOL RAHI HOON…")
+        glow.heard(t)
         speaking = true
-        try { speaker.say(t) { overlay.level(it) } } finally { speaking = false }
+        try { speaker.say(t) { glow.setLevel(it) } } finally { speaking = false }
     }
 
     private fun handle(text: String) {
         if (text.isBlank()) return
         busy = true
-        overlay.heard(text)
-        overlay.state(2, "SOCH RAHI HOON…")
+        glow.heard(text)
+        glow.state("SOCH RAHI HOON…")
         job?.cancel()
         job = scope.launch {
             val ctx = this@MaxService
@@ -417,7 +420,7 @@ class MaxService : Service() {
                     }
                     "save_contact" -> Store.saveContact(ctx, g.optString("name"), g.optString("number"))
                     "research" -> {
-                        overlay.state(2, "SEARCH KAR RAHI HOON…")
+                        glow.state("SEARCH KAR RAHI HOON…")
                         say = withContext(Dispatchers.IO) { Gemini.ask(ctx, g.optString("query", text), search = true) }
                         hideAfter = 400
                     }
@@ -428,6 +431,13 @@ class MaxService : Service() {
                     "system" -> if (!actions.global(g.optString("cmd"))) say = noA11y
                     "screenshot" -> if (!screenshotAndShare()) say = noA11y
                     "photo" -> if (!actions.photo()) say = "Camera app nahi khul paya."
+                    "vision" -> {
+                        glow.state("DEKH RAHI HOON…")
+                        val jpeg = withContext(Dispatchers.IO) { CameraVision.capture(ctx, g.optString("facing", "back")) }
+                        say = if (jpeg == null) "Camera se photo nahi le payi. Permission ya doosra app camera use kar raha ho sakta hai."
+                        else withContext(Dispatchers.IO) { Gemini.describeImage(ctx, jpeg, g.optString("question", text)) }
+                    }
+                    "vision_live" -> { say = visionLive(g.optString("facing", "back")); hideAfter = 600 }
                     "answer_call" -> if (!actions.answerCall()) say = "Call uthane ki permission nahi hai."
                     "reject_call" -> if (!actions.hangUp()) say = "Call kaatne ki permission nahi hai."
                     "contacts" -> say = withContext(Dispatchers.IO) { actions.allContacts() }
@@ -477,8 +487,28 @@ class MaxService : Service() {
             } catch (e: Exception) {
                 speak("Kuch gadbad ho gayi. ${e.message.orEmpty().take(90)}")
             }
+            overlay.hide()
             followUp()
         }
+    }
+
+    /** Captures a frame every few seconds for about a minute and narrates what changes. Stops early if told to. */
+    private suspend fun visionLive(facing: String): String = coroutineScope {
+        var last = ""
+        var rounds = 0
+        while (rounds < 12) {
+            glow.state("LIVE DEKH RAHI HOON…")
+            val jpeg = withContext(Dispatchers.IO) { CameraVision.capture(this@MaxService, facing) }
+            if (jpeg == null) return@coroutineScope "Camera se dekh nahi payi. Permission check karo."
+            val desc = withContext(Dispatchers.IO) {
+                runCatching { Gemini.describeImage(this@MaxService, jpeg, "Sirf 1 chhota sentence mein batao kya dikh raha hai, pehle jaisa hi ho to khaali jawab do.") }
+                    .getOrDefault("")
+            }
+            if (desc.isNotBlank() && desc != last) { speak(desc); last = desc }
+            rounds++
+            delay(5000)
+        }
+        "Vision live band kar di."
     }
 
     /** Streams the HTML from Gemini onto the code panel, saves it, opens it in Chrome. */

@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
-import android.net.Uri
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.telecom.TelecomManager
