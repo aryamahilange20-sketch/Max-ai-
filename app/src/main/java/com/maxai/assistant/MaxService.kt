@@ -216,7 +216,7 @@ class MaxService : Service() {
             onLevel = { glow.setLevel(it) },
             onText = { t -> lastReply.value = t; glow.heard(t) },
             onEnd = { live = null; glow.setLevel(0f); finish(0) },
-            onFail = { msg -> speak(msg) }
+            onFail = { msg -> scope.launch { speak(msg) } }
         ).also { it.start() }
     }
 
