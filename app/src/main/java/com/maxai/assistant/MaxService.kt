@@ -75,7 +75,7 @@ class MaxService : Service() {
     private var busy = false
     @Volatile private var speaking = false
     private var live: LiveSession? = null
-    private val history = ArrayDeque<String>()
+    // Conversation memory now persists in Store, so it survives a service restart.
     private val wakeRe = Regex("(?i)\\bmax\\b|मैक्स")
     private val RESULTS = SpeechRecognizer.RESULTS_RECOGNITION
 
@@ -200,10 +200,9 @@ class MaxService : Service() {
         if (rest.length > 2) handle(rest) else startLiveOrListen()
     }
 
-    /** Live voice when a key exists, otherwise the simple listening mode. */
+    /** The reliable turn-based voice flow is the default. Live mode is an explicit opt-in in Settings, since it needs Live API access this key may not have. */
     private fun startLiveOrListen() {
-        if (Store.key(this).isBlank()) { listenCommand(); return }
-        startLive()
+        if (Store.liveMode(this) && Store.key(this).isNotBlank()) startLive() else listenCommand()
     }
 
     private fun startLive() {
@@ -216,7 +215,8 @@ class MaxService : Service() {
             this,
             onLevel = { glow.setLevel(it) },
             onText = { t -> lastReply.value = t; glow.heard(t) },
-            onEnd = { live = null; glow.setLevel(0f); finish(0) }
+            onEnd = { live = null; glow.setLevel(0f); finish(0) },
+            onFail = { msg -> speak(msg) }
         ).also { it.start() }
     }
 
@@ -397,7 +397,7 @@ class MaxService : Service() {
                     followUp()
                     return@launch
                 }
-                val plan = withContext(Dispatchers.IO) { Gemini.plan(ctx, text, history.joinToString("\n")) }
+                val plan = withContext(Dispatchers.IO) { Gemini.plan(ctx, text, Store.history(ctx).joinToString("\n")) }
                 val a = plan.optString("action", "chat")
                 val g = plan.optJSONObject("args") ?: JSONObject()
                 var say = plan.optString("say")
@@ -480,12 +480,11 @@ class MaxService : Service() {
                     "build_site" -> { say = buildSite(g, say); hideAfter = 1500 }
                 }
                 speak(say)
-                history.addLast("User: $text\nMAX: $say")
-                while (history.size > 6) history.removeFirst()
+                Store.addHistory(ctx, "User: $text\nMAX: $say")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                speak("Kuch gadbad ho gayi. ${e.message.orEmpty().take(90)}")
+                speak(Gemini.friendly(e))
             }
             overlay.hide()
             followUp()

@@ -37,6 +37,18 @@ object Store {
     fun setAutoSend(c: Context, v: Boolean) = p(c).edit().putBoolean("autosend", v).apply()
     fun dark(c: Context) = p(c).getBoolean("dark", true)
     fun setDark(c: Context, v: Boolean) = p(c).edit().putBoolean("dark", v).apply()
+    fun liveMode(c: Context) = p(c).getBoolean("live_mode", false)
+    fun setLiveMode(c: Context, v: Boolean) = p(c).edit().putBoolean("live_mode", v).apply()
+
+    fun history(c: Context): List<String> {
+        val a = JSONArray(p(c).getString("history", "[]") ?: "[]")
+        return (0 until a.length()).map { a.getString(it) }
+    }
+    fun addHistory(c: Context, line: String) {
+        val list = (history(c) + line).takeLast(8)
+        p(c).edit().putString("history", JSONArray(list).toString()).apply()
+    }
+    fun clearHistory(c: Context) = p(c).edit().remove("history").apply()
 
     // ---- boss password lock
     fun ownerPass(c: Context): String = p(c).getString("passwd", "") ?: ""
@@ -171,6 +183,20 @@ object Gemini {
         }
     }
 
+    /** Turns a raw API error into a short, clear Hinglish message. */
+    fun friendly(e: Throwable): String {
+        val m = (e.message ?: "").lowercase()
+        return when {
+            "quota" in m || "resource_exhausted" in m || "rate" in m || "429" in m ->
+                "Abhi free quota khatam ho gaya hai. Thodi der baad try karo."
+            "billing" in m || "permission_denied" in m || "403" in m ->
+                "Is API key ko ye model use karne ki permission nahi hai. Google AI Studio mein key check karo."
+            "api key not valid" in m || "api_key_invalid" in m ->
+                "API key galat hai. Settings mein sahi key daalo."
+            else -> e.message?.take(90) ?: "Kuch gadbad ho gayi."
+        }
+    }
+
     private fun call(c: Context, models: List<String>, body: JSONObject): JSONObject {
         var last: Exception = IllegalStateException("No Gemini model answered")
         for (m in models) {
@@ -255,23 +281,33 @@ For call and whatsapp use the exact saved name from that list when it matches, o
     /** Streams a full HTML page; onChunk receives each piece as it is written (for the transparent code screen). */
     fun streamHtml(c: Context, brief: String, onChunk: (String) -> Unit): String {
         val sys = "You are an expert front-end designer. Output ONLY one complete, self-contained, beautiful, responsive HTML file " +
-            "(inline CSS and JS, Google Fonts allowed, no other external files). No explanations, no markdown fences."
-        val h = conn(c, chatModels(c).first(), "streamGenerateContent?alt=sse")
-        send(h, body(sys, brief))
-        val sb = StringBuilder()
-        h.inputStream.bufferedReader().forEachLine { l ->
-            if (l.startsWith("data:")) {
-                runCatching { text(JSONObject(l.substring(5).trim())) }.getOrNull()?.let { sb.append(it); onChunk(it) }
+            "(inline CSS and JS, Google Fonts allowed, no other external files, premium modern design). No explanations, no markdown fences."
+        var last: Exception = IllegalStateException("No Gemini model answered")
+        for (m in chatModels(c)) {
+            val sb = StringBuilder()
+            try {
+                val h = conn(c, m, "streamGenerateContent?alt=sse")
+                send(h, body(sys, brief))
+                h.inputStream.bufferedReader().forEachLine { l ->
+                    if (l.startsWith("data:")) {
+                        runCatching { text(JSONObject(l.substring(5).trim())) }.getOrNull()?.let { sb.append(it); onChunk(it) }
+                    }
+                }
+                if (sb.isNotEmpty()) return sb.toString().trim().removePrefix("```html").removePrefix("```").removeSuffix("```").trim()
+            } catch (e: Exception) {
+                last = e
             }
         }
-        return sb.toString().trim().removePrefix("```html").removePrefix("```").removeSuffix("```").trim()
+        throw IllegalStateException(friendly(last))
     }
 
     /** Natural female voice. Returns 24 kHz 16-bit mono PCM. */
     fun speech(c: Context, text: String): ByteArray {
         val b = JSONObject()
-            .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
-                "Say this in a sweet, soft, cheerful, warm young girl voice, gentle and caring, with natural pauses and a little smile in the voice: $text")))))
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
+                "You are a voice narrator. Speak only the user's exact message aloud, nothing else, nothing added. " +
+                    "Use a sweet, soft, cheerful, warm young girl voice, gentle and caring, with natural pauses."))))
+            .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", text)))))
             .put("generationConfig", JSONObject()
                 .put("responseModalities", JSONArray().put("AUDIO"))
                 .put("speechConfig", JSONObject().put("voiceConfig", JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", Store.voice(c))))))

@@ -27,7 +27,8 @@ class LiveSession(
     private val c: Context,
     private val onLevel: (Float) -> Unit,
     private val onText: (String) -> Unit,
-    private val onEnd: () -> Unit
+    private val onEnd: () -> Unit,
+    private val onFail: (String) -> Unit = {}
 ) {
     companion object {
         private const val IN_RATE = 16000
@@ -68,11 +69,16 @@ class LiveSession(
     fun start() {
         val key = Store.key(c)
         if (key.isBlank()) {
-            ui { onText("API key nahi hai. Settings mein daalo.") }
+            ui { onFail("API key nahi hai. Settings mein daalo.") }
             ui { onEnd() }
             return
         }
         val model = liveModel(c)
+        if (model.isBlank()) {
+            ui { onFail("Is API key par Live voice abhi available nahi hai. Normal voice se baat karti hoon.") }
+            ui { onEnd() }
+            return
+        }
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$key"
         running = true
         lastSpeech = System.currentTimeMillis()
@@ -83,7 +89,14 @@ class LiveSession(
             override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(bytes.utf8())
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                ui { onText("Live connection toot gaya: ${t.message.orEmpty().take(90)}") }
+                val code = response?.code
+                val msg = when {
+                    code == 403 || code == 401 -> "Is API key ko Live voice ki permission nahi hai."
+                    code == 429 -> "Live voice ka quota khatam ho gaya hai abhi ke liye."
+                    code != null -> "Live voice se connect nahi ho payi (code $code). Normal voice se baat karti hoon."
+                    else -> "Live voice se connect nahi ho payi. Normal voice se baat karti hoon."
+                }
+                ui { onFail(msg) }
                 stop()
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { stop() }

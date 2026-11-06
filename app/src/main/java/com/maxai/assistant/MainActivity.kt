@@ -486,6 +486,17 @@ private fun SettingsTab() {
             }
         }
         Soft(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                var live by remember { mutableStateOf(Store.liveMode(c)) }
+                Column(Modifier.weight(1f)) {
+                    Text("Live voice (beta)", fontWeight = FontWeight.Bold, color = INK)
+                    Text("Off: wahi bharosemand tareeka jo bolo-suno-jawab de. On: real-time baat, lekin tumhari API key par depend karta hai aur fail ho sakta hai.", color = MUTE, fontSize = 13.sp)
+                }
+                Switch(checked = live, onCheckedChange = { live = it; Store.setLiveMode(c, it) })
+            }
+        }
+        Button(onClick = { Store.clearHistory(c) }) { Text("Purani baatein bhula do") }
+        Soft(Modifier.fillMaxWidth()) {
             val scope = rememberCoroutineScope()
             var status by remember { mutableStateOf(if (VoiceId.enrolled(c)) "Awaaz enrolled (${VoiceId.count(c)} samples)" else "Awaaz enroll nahi hui") }
             Text("Boss ki awaaz", fontWeight = FontWeight.Bold, color = INK)
