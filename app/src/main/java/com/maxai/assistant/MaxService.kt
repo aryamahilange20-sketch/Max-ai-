@@ -213,6 +213,7 @@ class MaxService : Service() {
         live?.stop()
         live = LiveSession(
             this,
+            withVideo = Store.liveVideo(this),
             onLevel = { glow.setLevel(it) },
             onText = { t -> lastReply.value = t; glow.heard(t) },
             onEnd = { live = null; glow.setLevel(0f); finish(0) },

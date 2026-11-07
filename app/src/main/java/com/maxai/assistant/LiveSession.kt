@@ -25,6 +25,7 @@ import kotlin.math.sqrt
 /** Gemini Live: real two-way voice over a WebSocket. Mic streams up, voice streams back, user can interrupt. */
 class LiveSession(
     private val c: Context,
+    private val withVideo: Boolean = false,
     private val onLevel: (Float) -> Unit,
     private val onText: (String) -> Unit,
     private val onEnd: () -> Unit,
@@ -116,7 +117,9 @@ class LiveSession(
     private fun handle(raw: String) {
         val j = runCatching { JSONObject(raw) }.getOrNull() ?: return
         if (j.has("setupComplete")) {
+            running = true
             startMic()
+            if (withVideo) startVideo()
             return
         }
         val sc = j.optJSONObject("serverContent") ?: return
@@ -139,6 +142,22 @@ class LiveSession(
     }
 
     @Suppress("MissingPermission")
+    /** Sends a camera frame every 2 seconds as realtimeInput video, so MAX can see while talking. */
+    private fun startVideo() {
+        Thread {
+            while (running) {
+                val jpeg = runCatching { CameraVision.capture(c, "back") }.getOrNull()
+                if (jpeg != null && running) {
+                    val msg = JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject()
+                        .put("mimeType", "image/jpeg")
+                        .put("data", Base64.encodeToString(jpeg, Base64.NO_WRAP))))
+                    runCatching { ws?.send(msg.toString()) }
+                }
+                Thread.sleep(2000)
+            }
+        }.start()
+    }
+
     private fun startMic() {
         if (!running) return
         val min = AudioRecord.getMinBufferSize(IN_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)

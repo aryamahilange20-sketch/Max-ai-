@@ -84,3 +84,8 @@ Open MAX, paste the key, press Allow on each card, then "Ho gaya". On the Access
 - Wake word: after "MAX" only the glowing screen rim shows, no orb. MAX does not listen to its own voice, so it does not loop or cut itself off.
 - After each reply MAX keeps listening for a follow-up, so you can talk without saying "MAX" every time.
 - Emergency: mark contacts with SOS in Yaadein, then say "emergency SMS bhejo". MAX asks first, unless the "bina pooche" setting is on. Needs SEND_SMS permission.
+
+## Update: Live video, second UI
+- Live voice (Settings, beta, off by default) can now also stream back-camera frames into the same Gemini Live session every 2 seconds, when "Live video" is also turned on. MAX can then talk about what she sees while listening and speaking live. This depends entirely on your API key having Gemini Live access; if it doesn't, MAX falls back to the normal reliable voice flow and says so out loud.
+- A second Home screen style ("Classic") is now available in Settings > UI style: a darker "Good morning, Boss" layout with a big clock, the MAX wordmark, a Tap to start button, and the real battery percentage. The original Neon Home screen stays the default.
+- Declined this round: a 60+ feature Windows-PC automation list (Spotify, Excel, VSCode, PC temperature, Power Manager) that does not apply to an Android phone, and a full face-recognition "Owner Guard" biometric lock system — both are large, separate projects that need their own careful, tested pass rather than being bolted on blind.

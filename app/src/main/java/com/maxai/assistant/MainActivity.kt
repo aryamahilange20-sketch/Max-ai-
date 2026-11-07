@@ -72,6 +72,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.unit.em
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -290,6 +291,7 @@ private fun Orb(onClick: () -> Unit) {
 
 @Composable
 private fun Home(on: Boolean) {
+    if (Store.classicUi(LocalContext.current)) { ClassicHome(on); return }
     val c = LocalContext.current
     val last by MaxService.lastReply.collectAsState()
     var q by remember { mutableStateOf("") }
@@ -336,6 +338,63 @@ private fun Home(on: Boolean) {
             }
         )
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** A second, darker "Boss" style Home screen, alongside the Neon one. Switch in Settings. */
+@Composable
+private fun ClassicHome(on: Boolean) {
+    val c = LocalContext.current
+    val hr = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    val greet = if (hr < 12) "Good morning" else if (hr < 17) "Good afternoon" else "Good evening"
+    var battery by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(Unit) {
+        val i = c.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val lvl = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        if (lvl >= 0 && scale > 0) battery = (lvl * 100 / scale)
+    }
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF07070F)).verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("$greet, Boss", color = Color(0xFF8E96B8), fontSize = 15.sp)
+                Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()), color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+                Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), color = Color(0xFF8E96B8), fontSize = 13.sp)
+            }
+            Text(
+                if (on) "● Online" else "Offline", color = if (on) Color(0xFF5CE6A0) else Color(0xFF8E96B8), fontSize = 13.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF14172B))
+                    .clickable { MaxService.send(c, if (on) "STOP" else "START") }.padding(horizontal = 14.dp, vertical = 7.dp)
+            )
+        }
+        Spacer(Modifier.height(30.dp))
+        Text(
+            "MAX", fontSize = 64.sp, fontWeight = FontWeight.Black,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            style = androidx.compose.ui.text.TextStyle(brush = Brush.horizontalGradient(listOf(Color(0xFF8A7CFF), Color(0xFF5BC9FF), Color(0xFFFF6FD8))))
+        )
+        Text(
+            "Say \"Hello MAX\" to activate", color = Color(0xFF8E96B8), fontSize = 13.sp,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+        Text(
+            "Tap to start", color = Color.White, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp)
+                .clip(RoundedCornerShape(50)).background(Color(0xFF14172B))
+                .clickable { MaxService.send(c, "TALK") }.padding(horizontal = 28.dp, vertical = 14.dp)
+        )
+        Spacer(Modifier.height(10.dp))
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0xFF11131F)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("BATTERY", color = Color(0xFF8E96B8), fontSize = 11.sp, letterSpacing = 0.15.em)
+            Text(if (battery >= 0) "$battery%" else "…", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -493,6 +552,26 @@ private fun SettingsTab() {
                     Text("Off: wahi bharosemand tareeka jo bolo-suno-jawab de. On: real-time baat, lekin tumhari API key par depend karta hai aur fail ho sakta hai.", color = MUTE, fontSize = 13.sp)
                 }
                 Switch(checked = live, onCheckedChange = { live = it; Store.setLiveMode(c, it) })
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                var vid by remember { mutableStateOf(Store.liveVideo(c)) }
+                Column(Modifier.weight(1f)) {
+                    Text("Live video (beta)", fontWeight = FontWeight.Bold, color = INK)
+                    Text("Live voice on ho tab hi kaam karta hai. On karne par MAX har 2 second mein back camera se dekhti hui baat karegi.", color = MUTE, fontSize = 13.sp)
+                }
+                Switch(checked = vid, onCheckedChange = { vid = it; Store.setLiveVideo(c, it) })
+            }
+        }
+        Soft(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                var classic by remember { mutableStateOf(Store.classicUi(c)) }
+                Column(Modifier.weight(1f)) {
+                    Text("UI style", fontWeight = FontWeight.Bold, color = INK)
+                    Text(if (classic) "Classic (dark, Boss greeting)" else "Neon (current)", color = MUTE, fontSize = 13.sp)
+                }
+                Switch(checked = classic, onCheckedChange = { classic = it; Store.setClassicUi(c, it) })
             }
         }
         Button(onClick = { Store.clearHistory(c) }) { Text("Purani baatein bhula do") }

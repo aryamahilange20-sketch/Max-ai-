@@ -39,6 +39,10 @@ object Store {
     fun setDark(c: Context, v: Boolean) = p(c).edit().putBoolean("dark", v).apply()
     fun liveMode(c: Context) = p(c).getBoolean("live_mode", false)
     fun setLiveMode(c: Context, v: Boolean) = p(c).edit().putBoolean("live_mode", v).apply()
+    fun liveVideo(c: Context) = p(c).getBoolean("live_video", false)
+    fun setLiveVideo(c: Context, v: Boolean) = p(c).edit().putBoolean("live_video", v).apply()
+    fun classicUi(c: Context) = p(c).getBoolean("classic_ui", false)
+    fun setClassicUi(c: Context, v: Boolean) = p(c).edit().putBoolean("classic_ui", v).apply()
 
     fun history(c: Context): List<String> {
         val a = JSONArray(p(c).getString("history", "[]") ?: "[]")
