@@ -89,3 +89,9 @@ Open MAX, paste the key, press Allow on each card, then "Ho gaya". On the Access
 - Live voice (Settings, beta, off by default) can now also stream back-camera frames into the same Gemini Live session every 2 seconds, when "Live video" is also turned on. MAX can then talk about what she sees while listening and speaking live. This depends entirely on your API key having Gemini Live access; if it doesn't, MAX falls back to the normal reliable voice flow and says so out loud.
 - A second Home screen style ("Classic") is now available in Settings > UI style: a darker "Good morning, Boss" layout with a big clock, the MAX wordmark, a Tap to start button, and the real battery percentage. The original Neon Home screen stays the default.
 - Declined this round: a 60+ feature Windows-PC automation list (Spotify, Excel, VSCode, PC temperature, Power Manager) that does not apply to an Android phone, and a full face-recognition "Owner Guard" biometric lock system — both are large, separate projects that need their own careful, tested pass rather than being bolted on blind.
+
+## Critical fix: MAX stopped responding to everything
+Two real bugs found by careful code review (not guessed):
+1. Sending a plain typed message required microphone permission to even reach the service — if mic permission was ever missing or revoked, typing and pressing send did nothing at all, silently.
+2. On Android 14+, starting the foreground service with the microphone type while that permission was missing would crash the service outright — again silently, from the user's point of view.
+3. The boss-password guard was checked on every single message, not just sensitive ones (call, WhatsApp, emergency SMS). If a boss password was ever set and 3 wrong attempts happened, MAX would refuse to answer anything at all, including plain chat — this is almost certainly why nothing was getting a real reply. The guard is now scoped to only the three sensitive actions.

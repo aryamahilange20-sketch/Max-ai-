@@ -56,8 +56,10 @@ class MaxService : Service() {
         val lastReply = MutableStateFlow("")
 
         /** actions: START, STOP, TALK, TEXT, CALL_RING. */
+        /** Mic permission is only required for actions that actually use the microphone (START, TALK). TEXT, STOP and anything else must always go through. */
         fun send(c: Context, action: String, text: String? = null, number: String? = null) {
-            if (c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+            val needsMic = action == "START" || action == "TALK"
+            if (needsMic && c.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
             ContextCompat.startForegroundService(
                 c, Intent(c, MaxService::class.java).setAction(action).putExtra("text", text).putExtra("number", number)
             )
@@ -123,7 +125,11 @@ class MaxService : Service() {
             .setContentTitle("MAX jaag raha hai")
             .setContentText("\"Hello MAX\" bolo")
             .setContentIntent(open).addAction(0, "Band karo", stop).setOngoing(true).build()
-        ServiceCompat.startForeground(this, 1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        // On Android 14+, declaring the microphone type without the permission crashes the service.
+        // Use it only when the permission is actually granted, so text/other commands still work without it.
+        val type = if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+        ServiceCompat.startForeground(this, 1, n, type)
     }
 
     // ---------- listening ----------
@@ -386,12 +392,6 @@ class MaxService : Service() {
             val ctx = this@MaxService
             var hideAfter = 700L
             try {
-                val blocked = Store.guard(ctx, text)
-                if (blocked != null) {
-                    speak(blocked)
-                    followUp()
-                    return@launch
-                }
                 val local = localCmd(text)
                 if (local != null) {
                     speak(local)
@@ -406,18 +406,26 @@ class MaxService : Service() {
                 when (a) {
                     "open_app" -> if (!actions.openApp(g.optString("app"))) say = "Mujhe ye app nahi mila."
                     "call" -> {
-                        val name = g.optString("name")
-                        val n = actions.number(name)
-                        if (n == null) say = "Ye naam save nahi hai. Yaadein mein number daal do."
-                        else if (!confirm("$name ko call lagaun? Haan ya na bolo.")) say = "Theek hai, call cancel."
-                        else { speak(say); say = ""; actions.call(n) }
+                        val guarded = Store.guard(ctx, text)
+                        if (guarded != null) { say = guarded }
+                        else {
+                            val name = g.optString("name")
+                            val n = actions.number(name)
+                            if (n == null) say = "Ye naam save nahi hai. Yaadein mein number daal do."
+                            else if (!confirm("$name ko call lagaun? Haan ya na bolo.")) say = "Theek hai, call cancel."
+                            else { speak(say); say = ""; actions.call(n) }
+                        }
                     }
                     "whatsapp" -> {
-                        val to = g.optString("to")
-                        val n = actions.number(to)
-                        if (n == null) say = "Ye number save nahi hai."
-                        else if (!confirm("$to ko ye message bhejun: ${g.optString("message")}. Haan ya na bolo.")) say = "Theek hai, message nahi bheja."
-                        else if (!actions.whatsapp(n, g.optString("message"))) say = "WhatsApp install nahi mila."
+                        val guarded = Store.guard(ctx, text)
+                        if (guarded != null) { say = guarded }
+                        else {
+                            val to = g.optString("to")
+                            val n = actions.number(to)
+                            if (n == null) say = "Ye number save nahi hai."
+                            else if (!confirm("$to ko ye message bhejun: ${g.optString("message")}. Haan ya na bolo.")) say = "Theek hai, message nahi bheja."
+                            else if (!actions.whatsapp(n, g.optString("message"))) say = "WhatsApp install nahi mila."
+                        }
                     }
                     "save_contact" -> Store.saveContact(ctx, g.optString("name"), g.optString("number"))
                     "research" -> {
@@ -444,13 +452,17 @@ class MaxService : Service() {
                     "contacts" -> say = withContext(Dispatchers.IO) { actions.allContacts() }
                         .take(10).joinToString(", ") { it.first }.ifEmpty { "Phone mein koi contact nahi mila." }
                     "emergency_sms" -> {
-                        val msg = g.optString("message").ifBlank { "Mujhe madad chahiye. Please jaldi call karo." }
-                        val list = Store.emergencyContacts(ctx)
-                        if (list.isEmpty()) say = "Pehle Yaadein mein contact par Emergency ON karo."
-                        else if (!confirm("${list.size} emergency contact ko ye SMS bhejun: $msg. Haan ya na bolo.")) say = "Theek hai, SMS nahi bheja."
+                        val guarded = Store.guard(ctx, text)
+                        if (guarded != null) { say = guarded }
                         else {
-                            val ok = list.count { actions.sms(it.second, msg) }
-                            say = "$ok logon ko SMS bhej diya."
+                            val msg = g.optString("message").ifBlank { "Mujhe madad chahiye. Please jaldi call karo." }
+                            val list = Store.emergencyContacts(ctx)
+                            if (list.isEmpty()) say = "Pehle Yaadein mein contact par Emergency ON karo."
+                            else if (!confirm("${list.size} emergency contact ko ye SMS bhejun: $msg. Haan ya na bolo.")) say = "Theek hai, SMS nahi bheja."
+                            else {
+                                val ok = list.count { actions.sms(it.second, msg) }
+                                say = "$ok logon ko SMS bhej diya."
+                            }
                         }
                     }
                     "chatgpt" -> {
